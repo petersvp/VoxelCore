@@ -7,9 +7,9 @@ namespace PiDev.VoxelCore
     /// <summary>A 3D chunk with a lazily allocated, contiguous unmanaged cell buffer.</summary>
     /// <remarks>Cells are stored with x varying fastest. A null buffer represents a uniform default-valued chunk.</remarks>
     /// <example><![CDATA[
-    /// var chunk = new DenseChunk3D<byte, int>(16, 0);
+    /// var chunk = new DenseChunk3DFast<byte, int>(16, 0);
     /// chunk[2, 3, 4] = 7;
-    /// IChunk3D<int>? optimized = chunk.Optimize(); // May be this, a sparse chunk, or null.
+    /// IChunk3DFast<int>? optimized = chunk.Optimize(); // May be this, a sparse chunk, or null.
     /// ]]></example>
     public unsafe class DenseChunk3DFast<K, T> : IChunk3DFast<T> where K : unmanaged where T : unmanaged
     {

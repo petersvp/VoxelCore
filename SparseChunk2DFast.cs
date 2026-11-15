@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -8,15 +9,15 @@ using System.Threading.Tasks;
 namespace PiDev.VoxelCore
 {
     /// <summary>A 2D chunk that stores only cells different from its default value.</summary>
-    /// <remarks>Assigning the default removes a stored entry. Enumerate yields stored entries only, even with includeDefault=true.</remarks>
+    /// <remarks>Assigning the default removes a stored entry. Enumerate yields stored entries only, even with includeDefault=true. Cell operations may run concurrently; callers must coordinate changes to Size or DefaultValue and optimization or conversion with writes.</remarks>
     /// <example><![CDATA[
-    /// var chunk = new SparseChunk2D<byte, int>(16, 0);
+    /// var chunk = new SparseChunk2DFast<byte, int>(16, 0);
     /// chunk[2, 3] = 7;
     /// chunk[2, 3] = 0; // Removes the entry.
     /// ]]></example>
     public class SparseChunk2DFast<K, T> : IChunk2DFast<T> where T : unmanaged where K : unmanaged
     {
-        internal Dictionary<(K, K), T> tiles = new();
+        internal ConcurrentDictionary<(K, K), T> tiles = new();
         /// <summary>Value returned for cells absent from the sparse dictionary.</summary>
         public T DefaultValue { get; set; }
         /// <summary>Caller-owned metadata carried into converted chunks.</summary>
@@ -47,7 +48,7 @@ namespace PiDev.VoxelCore
                 K X = (K)Convert.ChangeType(x, typeof(K));
                 K Y = (K)Convert.ChangeType(y, typeof(K));
                 if (value.Equals(DefaultValue))
-                    tiles.Remove((X,Y));
+                    tiles.TryRemove((X,Y), out _);
                 else
                     tiles[(X,Y)] = value;
             }
@@ -147,7 +148,7 @@ namespace PiDev.VoxelCore
         {
             K kx = (K)(object)x;
             K ky = (K)(object)y;
-            if (value.Equals(DefaultValue)) return tiles.Remove((kx, ky));
+            if (value.Equals(DefaultValue)) return tiles.TryRemove((kx, ky), out _);
             tiles[(kx, ky)] = value;
             return true;
         }

@@ -10,9 +10,9 @@ namespace PiDev.VoxelCore
     /// <summary>A 2D chunk with a lazily allocated, contiguous unmanaged cell buffer.</summary>
     /// <remarks>Before the first write, every cell reads as <see cref="DefaultValue"/> and no buffer is allocated.</remarks>
     /// <example><![CDATA[
-    /// var chunk = new DenseChunk2D<byte, int>(16, 0);
+    /// var chunk = new DenseChunk2DFast<byte, int>(16, 0);
     /// chunk[2, 3] = 7;
-    /// IChunk2D<int>? optimized = chunk.Optimize(); // May be this, a sparse chunk, or null.
+    /// IChunk2DFast<int>? optimized = chunk.Optimize(); // May be this, a sparse chunk, or null.
     /// ]]></example>
     public unsafe class DenseChunk2DFast<K, T> : IChunk2DFast<T> where K : unmanaged where T : unmanaged
     {

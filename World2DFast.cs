@@ -1,13 +1,16 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace PiDev.VoxelCore
 {
     /// <summary>A lazily created grid of 2D chunks addressed by world coordinates.</summary>
+    /// <remarks>The chunk map supports concurrent access, but callers must coordinate simultaneous access to each chunk's cells and mutable world settings.</remarks>
     /// <example><![CDATA[
-    /// var world = new World2D<byte, int>(_ => new SparseChunk2D<byte, int>(16, 0));
+    /// var world = new World2DFast<byte, int>(_ => new SparseChunk2DFast<byte, int>(16, 0));
     /// world[-1, 3] = 7;
     /// foreach (var entry in world.EnumerateChunks())
     /// {
@@ -21,16 +24,17 @@ namespace PiDev.VoxelCore
         /// <summary>Value returned outside bounds and passed to chunk optimization.</summary>
         public T defaultValue;
 
-        private readonly Dictionary<(int, int), IChunk2DFast<T>> chunks = new();
+        private readonly ConcurrentDictionary<(int, int), IChunk2DFast<T>> chunks = new();
 
         /// <summary>Creates a chunk for the supplied inclusive world-space range.</summary>
+        /// <remarks>Concurrent first access can call the factory more than once for the same coordinate; only one result is stored.</remarks>
         public delegate IChunk2DFast<T> ChunkFactoryDelegate(Range2D range);
         private readonly ChunkFactoryDelegate chunkFactory;
         private readonly int chunkSize;
         /// <summary>Side length of each square chunk.</summary>
         public int ChunkSize => chunkSize;
 
-        /// <summary>Enumerates chunks already created by this world and their chunk-coordinate keys.</summary>
+        /// <summary>Enumerates chunks already created by this world and their chunk-coordinate keys. Concurrent changes may appear during enumeration.</summary>
         public IEnumerable<KeyValuePair<(int x, int y), IChunk2DFast<T>>> EnumerateChunks()
         {
             foreach (var kv in chunks) yield return kv;
@@ -59,12 +63,9 @@ namespace PiDev.VoxelCore
 
         private IChunk2DFast<T> GetChunk(int chunkX, int chunkY)
         {
-            if (!chunks.TryGetValue((chunkX, chunkY), out var chunk))
-            {
-                chunk = chunkFactory(new Range2D(chunkX * chunkSize, (chunkX + 1) * chunkSize - 1, chunkY * chunkSize, (chunkY + 1) * chunkSize - 1));
-                chunks[(chunkX, chunkY)] = chunk;
-            }
-            return chunk;
+            return chunks.GetOrAdd((chunkX, chunkY), key => chunkFactory(new Range2D(
+                key.Item1 * chunkSize, (key.Item1 + 1) * chunkSize - 1,
+                key.Item2 * chunkSize, (key.Item2 + 1) * chunkSize - 1)));
         }
         /// <summary>Gets or creates the chunk containing a world-space point.</summary>
         public IChunk2DFast<T> GetChunkAt(int worldX, int worldY)
@@ -137,7 +138,7 @@ namespace PiDev.VoxelCore
         /// <summary>Removes an existing chunk by chunk coordinates without creating one.</summary>
         public void RemoveSchunk(int chunkX, int chunkY)
         {
-            chunks.Remove((chunkX, chunkY));
+            chunks.TryRemove((chunkX, chunkY), out _);
         }
 
         /// <summary>Optimizes an existing chunk against the world default and removes it when optimization returns null.</summary>
@@ -152,8 +153,10 @@ namespace PiDev.VoxelCore
                 optimized = sparseChunk.Optimize(defaultValue);
             else return;
 
-            if (optimized == null) chunks.Remove(key);
-            else if (!ReferenceEquals(optimized, chunk)) chunks[key] = optimized;
+            if (optimized == null)
+                ((ICollection<KeyValuePair<(int, int), IChunk2DFast<T>>>)chunks).Remove(new(key, chunk));
+            else if (!ReferenceEquals(optimized, chunk))
+                chunks.TryUpdate(key, optimized, chunk);
         }
 
         /// <summary>Applies OptimizeChunk to a snapshot of all loaded chunk keys.</summary>
@@ -161,6 +164,12 @@ namespace PiDev.VoxelCore
         {
             var keys = new List<(int, int)>(chunks.Keys);
             foreach (var key in keys) OptimizeChunk(key.Item1, key.Item2);
+        }
+
+        /// <summary>Optimizes a snapshot of loaded chunk keys in parallel. Callers must coordinate access to each chunk and changes to world settings while it is being optimized.</summary>
+        public void OptimizeAllChunksParallel()
+        {
+            Parallel.ForEach(chunks.Keys, key => OptimizeChunk(key.Item1, key.Item2));
         }
 
         /// <summary>Creates a serializer with optional value replacements.</summary>

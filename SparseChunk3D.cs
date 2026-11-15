@@ -1,18 +1,29 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
 {
     /// <summary>A 3D chunk that stores only cells different from its default value.</summary>
-    /// <remarks>Assigning the default removes a stored entry. TrySet returns whether it changed storage for a default assignment.</remarks>
+    /// <remarks>Assigning the default removes a stored entry. TrySet returns whether it changed storage for a default assignment. Cell operations may run concurrently; callers must coordinate changes to Size or DefaultValue and optimization or conversion with writes.</remarks>
     /// <example><![CDATA[
     /// var chunk = new SparseChunk3D<byte, int>(16, 0);
     /// chunk[2, 3, 4] = 7;
     /// IChunk3D<int>? optimized = chunk.Optimize(0); // Null means this chunk can be discarded.
     /// ]]></example>
-    public class SparseChunk3D<K, T> : IChunk3D<T> where T : unmanaged where K : unmanaged
+    public class SparseChunk3D<K, T> : IChunk3D<T> where K : unmanaged
     {
-        internal Dictionary<(K, K, K), T> tiles = new();
+        private readonly struct Cell
+        {
+            public readonly T value;
+            public Cell(T value) { this.value = value; }
+        }
+
+        private readonly ConcurrentDictionary<(K, K, K), Cell> tiles = new();
+        /// <summary>Comparer used for default values and frequency counting.</summary>
+        public IEqualityComparer<T> Comparer { get; }
+        /// <summary>Optional whole-chunk serializer.</summary>
+        public GenericSerializer<IChunk3D<T>>? Serializer { get; set; }
         /// <summary>Backing field for DefaultValue.</summary>
         public T defaultValue;
         /// <summary>Value returned for cells absent from the sparse dictionary.</summary>
@@ -24,10 +35,13 @@ namespace PiDev.VoxelCore
         public int Size { get; set; }
         
         /// <summary>Creates an initially empty sparse chunk.</summary>
-        public SparseChunk3D(int size, T defaultValue)
+        public SparseChunk3D(int size, T defaultValue,
+            IEqualityComparer<T>? comparer = null, GenericSerializer<IChunk3D<T>>? serializer = null)
         {
             Size = size;
             DefaultValue = defaultValue;
+            Comparer = comparer ?? EqualityComparer<T>.Default;
+            Serializer = serializer;
         }
 
         /// <summary>Reads a local cell, or stores/removes it when assigned a non-default/default value.</summary>
@@ -37,14 +51,14 @@ namespace PiDev.VoxelCore
             get
             {
                 CheckBounds(x, y, z);
-                return tiles.TryGetValue((ToKey(x), ToKey(y), ToKey(z)), out T value) ? value : DefaultValue;
+                return tiles.TryGetValue((ToKey(x), ToKey(y), ToKey(z)), out Cell cell) ? cell.value : DefaultValue;
             }
             set
             {
                 CheckBounds(x, y, z);
                 var key = (ToKey(x), ToKey(y), ToKey(z));
-                if (value.Equals(DefaultValue)) tiles.Remove(key);
-                else tiles[key] = value;
+                if (Comparer.Equals(value, DefaultValue)) tiles.TryRemove(key, out _);
+                else tiles[key] = new Cell(value);
             }
         }
 
@@ -67,7 +81,13 @@ namespace PiDev.VoxelCore
                 value = DefaultValue;
                 return false;
             }
-            return tiles.TryGetValue((ToKey(x), ToKey(y), ToKey(z)), out value);
+            if (tiles.TryGetValue((ToKey(x), ToKey(y), ToKey(z)), out Cell cell))
+            {
+                value = cell.value;
+                return true;
+            }
+            value = default!;
+            return false;
         }
 
         /// <summary>Stores a non-default in-bounds value, or removes a matching-default entry.</summary>
@@ -76,8 +96,8 @@ namespace PiDev.VoxelCore
         {
             if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) return false;
             var key = (ToKey(x), ToKey(y), ToKey(z));
-            if (value.Equals(DefaultValue)) return tiles.Remove(key);
-            tiles[key] = value;
+            if (Comparer.Equals(value, DefaultValue)) return tiles.TryRemove(key, out _);
+            tiles[key] = new Cell(value);
             return true;
         }
 
@@ -94,37 +114,43 @@ namespace PiDev.VoxelCore
                 yield break;
             }
             foreach (var kvp in tiles)
-                yield return (ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3), kvp.Value);
+                yield return (ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3), kvp.Value.value);
         }
 
-        /// <summary>Rebases the sparse default when that reduces the number of stored cells.</summary>
-        /// <param name="defaultValue">Target default when supplied; null lets the chunk choose its most common value.</param>
-        /// <returns>This if no rebase helps; a new sparse chunk if one helps; null when all cells match a supplied default or the current default.</returns>
-        public IChunk3D<T>? Optimize(T? defaultValue = null)
+        /// <summary>Optimizes against the most common cell value.</summary>
+        public IChunk3D<T>? Optimize() => OptimizeImpl(false, default!);
+
+        /// <summary>Optimizes against an explicit default, including null or default(T).</summary>
+        public IChunk3D<T>? Optimize(T defaultValue) => OptimizeImpl(true, defaultValue);
+
+        private IChunk3D<T>? OptimizeImpl(bool hasDefaultValue, T defaultValue)
         {
             int total = checked(Size * Size * Size);
-            var frequency = new Dictionary<T, int> { [DefaultValue] = total - tiles.Count };
-            foreach (var value in tiles.Values)
+            var frequency = new ValueCounter<T>(Comparer);
+            int storedInBounds = 0;
+            foreach (var entry in tiles)
             {
-                frequency.TryGetValue(value, out int count);
-                frequency[value] = count + 1;
+                int x = ToCoordinate(entry.Key.Item1);
+                int y = ToCoordinate(entry.Key.Item2);
+                int z = ToCoordinate(entry.Key.Item3);
+                if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) continue;
+                storedInBounds++;
+                frequency.Add(entry.Value.value);
             }
-            T mostCommonValue = DefaultValue;
-            foreach (var kvp in frequency)
-                if (kvp.Value > frequency[mostCommonValue]) mostCommonValue = kvp.Key;
-            T targetDefault = defaultValue.HasValue ? defaultValue.Value : mostCommonValue;
-            frequency.TryGetValue(targetDefault, out int targetCount);
-            if (targetCount == total && (defaultValue.HasValue || targetDefault.Equals(DefaultValue))) return null;
+            frequency.Add(DefaultValue, total - storedInBounds);
+            T targetDefault = hasDefaultValue ? defaultValue : frequency.MostCommon(DefaultValue);
+            int targetCount = frequency.Count(targetDefault);
+            if (targetCount == total && (hasDefaultValue || Comparer.Equals(targetDefault, DefaultValue))) return null;
             if (total - targetCount >= tiles.Count) return this;
 
-            var replacement = new SparseChunk3D<K, T>(Size, targetDefault);
+            var replacement = new SparseChunk3D<K, T>(Size, targetDefault, Comparer, Serializer);
             replacement.userdata = userdata;
             for (int x = 0; x < Size; x++)
                 for (int y = 0; y < Size; y++)
                     for (int z = 0; z < Size; z++)
                     {
                         T value = this[x, y, z];
-                        if (!value.Equals(targetDefault)) replacement[x, y, z] = value;
+                        if (!Comparer.Equals(value, targetDefault)) replacement[x, y, z] = value;
                     }
             return replacement;
         }
@@ -132,10 +158,10 @@ namespace PiDev.VoxelCore
         /// <summary>Copies this chunk into a dense buffer of the same size.</summary>
         public DenseChunk3D<K, T> ToDenseChunk()
         {
-            var denseChunk = new DenseChunk3D<K, T>(Size, DefaultValue);
+            var denseChunk = new DenseChunk3D<K, T>(Size, DefaultValue, Comparer, Serializer);
             denseChunk.userdata = userdata;
             foreach (var kvp in tiles)
-                denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value;
+                denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value.value;
             return denseChunk;
         }
 
@@ -143,11 +169,15 @@ namespace PiDev.VoxelCore
         public DenseChunk3D<K, T> ToDenseChunk(int size)
         {
             if (size < Size) throw new ArgumentOutOfRangeException(nameof(size));
-            var denseChunk = new DenseChunk3D<K, T>(size, DefaultValue);
+            var denseChunk = new DenseChunk3D<K, T>(size, DefaultValue, Comparer, Serializer);
             denseChunk.userdata = userdata;
             foreach (var kvp in tiles)
-                denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value;
+                denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value.value;
             return denseChunk;
         }
+
+        /// <summary>Calls the optional whole-chunk serializer.</summary>
+        public virtual byte[] Serialize() => Serializer?.Serialize(this)
+            ?? throw new NotSupportedException("No serializer has been supplied for this chunk.");
     }
 }

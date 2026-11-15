@@ -6,9 +6,9 @@ namespace PiDev.VoxelCore
     /// <summary>Reads the 3D chunk formats written by the generic and blit serializers.</summary>
     /// <remarks>The caller supplies the chunk size; it is not stored in the byte array. Pass optimize explicitly.</remarks>
     /// <example><![CDATA[
-    /// var original = new SparseChunk3D<byte, int>(16, 0);
+    /// var original = new SparseChunk3DFast<byte, int>(16, 0);
     /// byte[] data = new ChunkSerializer3D<byte, int>().SerializeOptimal(original, true);
-    /// IChunk3D<int> restored = new ChunkDeserializer3D<byte, int>(16).Deserialize(data, false);
+    /// IChunk3DFast<int> restored = new ChunkDeserializer3D<byte, int>(16).Deserialize(data, false);
     /// ]]></example>
     public unsafe class ChunkDeserializer3D<K, T> where K : unmanaged where T : unmanaged
     {

@@ -5,7 +5,7 @@ namespace PiDev.VoxelCore
     /// <summary>Writes concrete 3D chunks directly from their unmanaged storage.</summary>
     /// <remarks>No value replacement occurs. Packed XYZ coordinates are available only for size-16 sparse chunks.</remarks>
     /// <example><![CDATA[
-    /// var chunk = new SparseChunk3D<byte, int>(16, 0);
+    /// var chunk = new SparseChunk3DFast<byte, int>(16, 0);
     /// chunk[1, 2, 3] = 7;
     /// byte[] data = new ChunkBlitSerializer3D<byte, int>().SerializeSparse(chunk, true);
     /// ]]></example>
@@ -52,14 +52,15 @@ namespace PiDev.VoxelCore
             int keySize = sizeof(K);
             int coordinateSize = packedXYZ ? sizeof(ushort) : 3 * keySize;
             int entrySize = checked(coordinateSize + sizeof(T));
-            byte[] data = new byte[checked(1 + sizeof(T) + chunk.tiles.Count * entrySize)];
+            var entries = chunk.tiles.ToArray();
+            byte[] data = new byte[checked(1 + sizeof(T) + entries.Length * entrySize)];
             fixed (byte* target = data)
             {
                 target[0] = (byte)(packedXYZ ? 2 : 1);
                 T defaultValue = chunk.DefaultValue;
                 Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
                 int offset = 1 + sizeof(T);
-                foreach (var kvp in chunk.tiles)
+                foreach (var kvp in entries)
                 {
                     if (packedXYZ)
                     {

@@ -1,36 +1,38 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 
 namespace PiDev.VoxelCore
 {
     /// <summary>A lazily created grid of 2D chunks addressed by world coordinates.</summary>
+    /// <remarks>The chunk map supports concurrent access, but callers must coordinate simultaneous access to each chunk's cells and mutable world settings.</remarks>
     /// <example><![CDATA[
-    /// var world = new World2D<byte, int>(_ => new SparseChunk2D<byte, int>(16, 0));
-    /// world[-1, 3] = 7;
+    /// var world = new World2D<byte, string>(_ => new SparseChunk2D<byte, string>(16, "empty"));
+    /// world[-1, 3] = "stone";
     /// foreach (var entry in world.EnumerateChunks())
     /// {
-    ///     byte[] data = world.GetSerializer(null).SerializeOptimal(entry.Value, true);
+    ///     IChunk2D<string> chunk = entry.Value;
     /// }
     /// ]]></example>
-    public class World2D<K, T> where T : unmanaged where K : unmanaged
+    public class World2D<K, T> where K : unmanaged
     {
         /// <summary>Records whether a default value was supplied to the constructor.</summary>
         public bool usePreferredDefaultValue;
         /// <summary>Value returned outside bounds and passed to chunk optimization.</summary>
         public T defaultValue;
 
-        private readonly Dictionary<(int, int), IChunk2D<T>> chunks = new();
+        private readonly ConcurrentDictionary<(int, int), IChunk2D<T>> chunks = new();
 
         /// <summary>Creates a chunk for the supplied inclusive world-space range.</summary>
+        /// <remarks>Concurrent first access can call the factory more than once for the same coordinate; only one result is stored.</remarks>
         public delegate IChunk2D<T> ChunkFactoryDelegate(Range2D range);
         private readonly ChunkFactoryDelegate chunkFactory;
         private readonly int chunkSize;
         /// <summary>Side length of each square chunk.</summary>
         public int ChunkSize => chunkSize;
 
-        /// <summary>Enumerates chunks already created by this world and their chunk-coordinate keys.</summary>
+        /// <summary>Enumerates chunks already created by this world and their chunk-coordinate keys. Concurrent changes may appear during enumeration.</summary>
         public IEnumerable<KeyValuePair<(int x, int y), IChunk2D<T>>> EnumerateChunks()
         {
             foreach (var kv in chunks) yield return kv;
@@ -44,27 +46,29 @@ namespace PiDev.VoxelCore
         /// <summary>Creates a world that produces chunks on first access.</summary>
         /// <param name="factory">Receives the new chunk's inclusive world-space range.</param>
         /// <param name="chunkSize">Side length used for coordinate mapping.</param>
-        /// <param name="defaultValue">Optional world default; when omitted, default(T) is used. The stored world default is passed to chunk optimization.</param>
-        public World2D(ChunkFactoryDelegate factory, int chunkSize = 16, T? defaultValue = null)
+        /// <remarks>default(T) is passed to chunk optimization unless the other constructor supplies a value.</remarks>
+        public World2D(ChunkFactoryDelegate factory, int chunkSize = 16)
         {
             this.chunkFactory = factory;
             this.chunkSize = chunkSize;
-            if (defaultValue.HasValue)
-            {
-                usePreferredDefaultValue = true;
-                this.defaultValue = defaultValue.Value;
-            }
-            else usePreferredDefaultValue = false;
+            defaultValue = default!;
+            usePreferredDefaultValue = false;
+        }
+
+        /// <summary>Creates a world with an explicit default value, including null or default(T).</summary>
+        public World2D(ChunkFactoryDelegate factory, int chunkSize, T defaultValue)
+        {
+            this.chunkFactory = factory;
+            this.chunkSize = chunkSize;
+            this.defaultValue = defaultValue;
+            usePreferredDefaultValue = true;
         }
 
         private IChunk2D<T> GetChunk(int chunkX, int chunkY)
         {
-            if (!chunks.TryGetValue((chunkX, chunkY), out var chunk))
-            {
-                chunk = chunkFactory(new Range2D(chunkX * chunkSize, (chunkX + 1) * chunkSize - 1, chunkY * chunkSize, (chunkY + 1) * chunkSize - 1));
-                chunks[(chunkX, chunkY)] = chunk;
-            }
-            return chunk;
+            return chunks.GetOrAdd((chunkX, chunkY), key => chunkFactory(new Range2D(
+                key.Item1 * chunkSize, (key.Item1 + 1) * chunkSize - 1,
+                key.Item2 * chunkSize, (key.Item2 + 1) * chunkSize - 1)));
         }
         /// <summary>Gets or creates the chunk containing a world-space point.</summary>
         public IChunk2D<T> GetChunkAt(int worldX, int worldY)
@@ -137,7 +141,7 @@ namespace PiDev.VoxelCore
         /// <summary>Removes an existing chunk by chunk coordinates without creating one.</summary>
         public void RemoveSchunk(int chunkX, int chunkY)
         {
-            chunks.Remove((chunkX, chunkY));
+            chunks.TryRemove((chunkX, chunkY), out _);
         }
 
         /// <summary>Optimizes an existing chunk against the world default and removes it when optimization returns null.</summary>
@@ -152,8 +156,10 @@ namespace PiDev.VoxelCore
                 optimized = sparseChunk.Optimize(defaultValue);
             else return;
 
-            if (optimized == null) chunks.Remove(key);
-            else if (!ReferenceEquals(optimized, chunk)) chunks[key] = optimized;
+            if (optimized == null)
+                ((ICollection<KeyValuePair<(int, int), IChunk2D<T>>>)chunks).Remove(new(key, chunk));
+            else if (!ReferenceEquals(optimized, chunk))
+                chunks.TryUpdate(key, optimized, chunk);
         }
 
         /// <summary>Applies OptimizeChunk to a snapshot of all loaded chunk keys.</summary>
@@ -163,16 +169,11 @@ namespace PiDev.VoxelCore
             foreach (var key in keys) OptimizeChunk(key.Item1, key.Item2);
         }
 
-        /// <summary>Creates a serializer with optional value replacements.</summary>
-        public ChunkSerializer2D<K, T> GetSerializer(Dictionary<T, T>? replacements)
+        /// <summary>Optimizes a snapshot of loaded chunk keys in parallel. Callers must coordinate access to each chunk and changes to world settings while it is being optimized.</summary>
+        public void OptimizeAllChunksParallel()
         {
-            return new ChunkSerializer2D<K, T>(replacements);
+            Parallel.ForEach(chunks.Keys, key => OptimizeChunk(key.Item1, key.Item2));
         }
 
-        /// <summary>Creates a direct serializer for concrete dense or sparse chunks without replacements.</summary>
-        public ChunkBlitSerializer2D<K, T> GetFastSerializer()
-        {
-            return new ChunkBlitSerializer2D<K, T>();
-        }
     }
 }

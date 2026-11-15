@@ -9,7 +9,7 @@ namespace PiDev.VoxelCore
     /// <summary>Writes a 2D chunk as dense, sparse, or RLE bytes, with optional value replacements.</summary>
     /// <remarks>SerializeOptimal with exact=true builds dense, sparse, and RLE encodings and returns the smallest.</remarks>
     /// <example><![CDATA[
-    /// IChunk2D<int> chunk = new SparseChunk2D<byte, int>(16, 0);
+    /// IChunk2DFast<int> chunk = new SparseChunk2DFast<byte, int>(16, 0);
     /// chunk[1, 2] = 7;
     /// byte[] data = new ChunkSerializer2D<byte, int>().SerializeOptimal(chunk, true);
     /// ]]></example>

@@ -1,20 +1,23 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
 
 namespace PiDev.VoxelCore
 {
-    /// <summary>A 3D chunk with a lazily allocated, contiguous unmanaged cell buffer.</summary>
-    /// <remarks>Cells are stored with x varying fastest. A null buffer represents a uniform default-valued chunk.</remarks>
+    /// <summary>A 3D chunk with a lazily allocated managed cell array.</summary>
+    /// <remarks>Cells are stored with x varying fastest. A null array represents a uniform default-valued chunk.</remarks>
     /// <example><![CDATA[
     /// var chunk = new DenseChunk3D<byte, int>(16, 0);
     /// chunk[2, 3, 4] = 7;
     /// IChunk3D<int>? optimized = chunk.Optimize(); // May be this, a sparse chunk, or null.
     /// ]]></example>
-    public unsafe class DenseChunk3D<K, T> : IChunk3D<T> where K : unmanaged where T : unmanaged
+    public class DenseChunk3D<K, T> : IChunk3D<T> where K : unmanaged
     {
-        internal T* tiles;
+        private T[]? tiles;
         private readonly int size;
+        /// <summary>Comparer used for default values and frequency counting.</summary>
+        public IEqualityComparer<T> Comparer { get; }
+        /// <summary>Optional whole-chunk serializer.</summary>
+        public GenericSerializer<IChunk3D<T>>? Serializer { get; set; }
         /// <summary>Value read from every cell before a buffer is allocated.</summary>
         public T DefaultValue { get; set; }
         /// <summary>Caller-owned metadata carried into converted chunks.</summary>
@@ -24,17 +27,20 @@ namespace PiDev.VoxelCore
         public int Size => size;
 
         /// <summary>Creates a chunk whose buffer is initially unallocated.</summary>
-        public DenseChunk3D(int size = 16, T defaultValue = default)
+        public DenseChunk3D(int size = 16, T defaultValue = default,
+            IEqualityComparer<T>? comparer = null, GenericSerializer<IChunk3D<T>>? serializer = null)
         {
             this.size = size;
             DefaultValue = defaultValue;
+            Comparer = comparer ?? EqualityComparer<T>.Default;
+            Serializer = serializer;
             tiles = null;
         }
 
         private int GetIndex(int x, int y, int z) => (z * size * size) + (y * size) + x;
 
         /// <summary>Reads or writes a local cell; the first write allocates and fills the buffer.</summary>
-        /// <remarks>Coordinates must be within 0 through Size-1; this pointer-backed indexer does not check bounds.</remarks>
+        /// <remarks>Coordinates must be within 0 through Size-1; the array access checks its flat index.</remarks>
         public T this[int x, int y, int z]
         {
             get => (tiles != null) ? tiles[GetIndex(x, y, z)] : DefaultValue;
@@ -42,27 +48,21 @@ namespace PiDev.VoxelCore
             {
                 if (tiles == null)
                 {
-                    tiles = (T*)Marshal.AllocHGlobal(checked(size * size * size * sizeof(T)));
-                    for (int i = 0; i < size * size * size; i++)
-                        tiles[i] = DefaultValue;
+                    tiles = new T[checked(size * size * size)];
+                    Array.Fill(tiles, DefaultValue);
                 }
                 tiles[GetIndex(x, y, z)] = value;
             }
         }
 
-        /// <summary>Counts all allocated cell values; returns an empty map while the buffer is null.</summary>
-        public Dictionary<T, int> CountValues()
+        /// <summary>Counts allocated cell values, including null, with the injected comparer.</summary>
+        /// <returns>An empty list while the buffer is null.</returns>
+        public List<KeyValuePair<T, int>> CountValues()
         {
-            Dictionary<T, int> valueCounts = new Dictionary<T, int>();
-            if (tiles == null) return valueCounts;
-            T* end = tiles + (size * size * size);
-            for (T* current = tiles; current < end; current++)
-            {
-                T value = *current;
-                if (valueCounts.ContainsKey(value)) valueCounts[value]++;
-                else valueCounts[value] = 1;
-            }
-            return valueCounts;
+            if (tiles == null) return new List<KeyValuePair<T, int>>();
+            var counts = new ValueCounter<T>(Comparer);
+            foreach (T value in tiles) counts.Add(value);
+            return counts.ToList();
         }
 
         /// <summary>Reads a cell; returns false with DefaultValue if the buffer is still unallocated.</summary>
@@ -82,9 +82,8 @@ namespace PiDev.VoxelCore
         {
             if (tiles == null)
             {
-                tiles = (T*)Marshal.AllocHGlobal(checked(size * size * size * sizeof(T)));
-                for (int i = 0; i < size * size * size; i++)
-                    tiles[i] = DefaultValue;
+                tiles = new T[checked(size * size * size)];
+                Array.Fill(tiles, DefaultValue);
             }
             tiles[GetIndex(x, y, z)] = value;
             return true;
@@ -99,7 +98,7 @@ namespace PiDev.VoxelCore
                     for (int x = 0; x < Size; x++)
                     {
                         T value = this[x, y, z];
-                        if (includeDefault || !value.Equals(DefaultValue))
+                        if (includeDefault || !Comparer.Equals(value, DefaultValue))
                             yield return (x, y, z, value);
                     }
         }
@@ -110,50 +109,43 @@ namespace PiDev.VoxelCore
         /// <summary>Copies this chunk into sparse storage using a specified default value.</summary>
         public SparseChunk3D<K, T> ToSparseChunk(T defaultValue)
         {
-            var sparseChunk = new SparseChunk3D<K, T>(Size, defaultValue);
+            var sparseChunk = new SparseChunk3D<K, T>(Size, defaultValue, Comparer, Serializer);
             sparseChunk.userdata = userdata;
             for (int z = 0; z < Size; z++)
                 for (int y = 0; y < Size; y++)
                     for (int x = 0; x < Size; x++)
                     {
                         T value = tiles != null ? tiles[GetIndex(x, y, z)] : DefaultValue;
-                        if (!value.Equals(defaultValue)) sparseChunk[x, y, z] = value;
+                        if (!Comparer.Equals(value, defaultValue)) sparseChunk[x, y, z] = value;
                     }
             return sparseChunk;
         }
 
-        /// <summary>Chooses sparse storage when it is smaller than the dense cell buffer.</summary>
-        /// <param name="defaultValue">Target default when supplied; null lets this chunk choose its most common value.</param>
-        /// <returns>This if conversion is not smaller; a new sparse chunk if it is; null when every cell matches a supplied default, or an empty chunk already matches its own default.</returns>
-        public IChunk3D<T>? Optimize(T? defaultValue = null)
+        /// <summary>Optimizes against the most common cell value.</summary>
+        public IChunk3D<T>? Optimize() => OptimizeImpl(false, default!);
+
+        /// <summary>Optimizes against an explicit default, including null or default(T).</summary>
+        public IChunk3D<T>? Optimize(T defaultValue) => OptimizeImpl(true, defaultValue);
+
+        private IChunk3D<T>? OptimizeImpl(bool hasDefaultValue, T defaultValue)
         {
             if (tiles == null)
-                return !defaultValue.HasValue || defaultValue.Value.Equals(DefaultValue) ? null : this;
+                return !hasDefaultValue || Comparer.Equals(defaultValue, DefaultValue) ? null : this;
             int total = checked(size * size * size);
-            var frequency = CountValues();
+            var frequency = new ValueCounter<T>(Comparer);
+            foreach (T value in tiles) frequency.Add(value);
+            T targetDefault = hasDefaultValue ? defaultValue : frequency.MostCommon(DefaultValue);
+            int targetCount = frequency.Count(targetDefault);
+            if (targetCount == total && (hasDefaultValue || Comparer.Equals(targetDefault, DefaultValue))) return null;
 
-            T mostCommonValue = DefaultValue;
-            int mostCommonCount = 0;
-            foreach (var kvp in frequency)
-                if (kvp.Value > mostCommonCount)
-                {
-                    mostCommonValue = kvp.Key;
-                    mostCommonCount = kvp.Value;
-                }
-
-            T targetDefault = defaultValue.HasValue ? defaultValue.Value : mostCommonValue;
-            frequency.TryGetValue(targetDefault, out int targetCount);
-            if (targetCount == total && (defaultValue.HasValue || targetDefault.Equals(DefaultValue))) return null;
-
-            long sparseBytes = (long)(total - targetCount) * (3 * sizeof(K) + sizeof(T));
-            long denseBytes = (long)total * sizeof(T);
-            if (sparseBytes >= denseBytes) return this;
+            // A sparse dictionary is worthwhile only when fewer than one quarter of cells need entries.
+            if ((long)(total - targetCount) * 4 >= total) return this;
             return ToSparseChunk(targetDefault);
         }
 
-        ~DenseChunk3D()
-        {
-            if (tiles != null) Marshal.FreeHGlobal((IntPtr)tiles);
-        }
+        /// <summary>Calls the optional whole-chunk serializer.</summary>
+        public virtual byte[] Serialize() => Serializer?.Serialize(this)
+            ?? throw new NotSupportedException("No serializer has been supplied for this chunk.");
+
     }
 }

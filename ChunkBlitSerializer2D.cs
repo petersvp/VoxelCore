@@ -5,7 +5,7 @@ namespace PiDev.VoxelCore
     /// <summary>Writes concrete 2D chunks directly from their unmanaged storage.</summary>
     /// <remarks>No value replacement occurs. A dense chunk without a buffer uses the default-only format.</remarks>
     /// <example><![CDATA[
-    /// var chunk = new DenseChunk2D<byte, int>(16, 0);
+    /// var chunk = new DenseChunk2DFast<byte, int>(16, 0);
     /// byte[] data = new ChunkBlitSerializer2D<byte, int>().SerializeDense(chunk);
     /// ]]></example>
     public unsafe class ChunkBlitSerializer2D<K, T> where K : unmanaged where T : unmanaged
@@ -49,14 +49,15 @@ namespace PiDev.VoxelCore
             int keySize = sizeof(K);
             int coordinateSize = packedXY ? sizeof(byte) : 2 * keySize;
             int entrySize = checked(coordinateSize + sizeof(T));
-            byte[] data = new byte[checked(1 + sizeof(T) + chunk.tiles.Count * entrySize)];
+            var entries = chunk.tiles.ToArray();
+            byte[] data = new byte[checked(1 + sizeof(T) + entries.Length * entrySize)];
             fixed (byte* target = data)
             {
                 target[0] = (byte)(packedXY ? 2 : 1);
                 T defaultValue = chunk.DefaultValue;
                 Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
                 int offset = 1 + sizeof(T);
-                foreach (var kvp in chunk.tiles)
+                foreach (var kvp in entries)
                 {
                     if (packedXY)
                     {

@@ -1,12 +1,12 @@
 # VoxelCore
 
-VoxelCore is a voxel-storage C# library for 2D and 3D voxel fields. It works in .NET and Unity without depending on `UnityEngine`. Worlds create chunks on demand, can mix dense and sparse storage, and serialize individual chunks to byte arrays.
+VoxelCore is a C# library for chunked 2D and 3D fields. It works in .NET and Unity without depending on `UnityEngine`. Worlds create chunks on demand and can mix dense and sparse storage.
 
-As of now, the voxel data is limited to unmanaged only types.
+There are two storage families. `World2DFast` and `World3DFast` use unmanaged cell values and provide the raw chunk serializers described below. `World2D` and `World3D` accept arbitrary C# values, including objects and null, in managed chunks. Managed chunks use a supplied comparer and an optional whole-chunk serializer.
 
-The API uses two type parameters: `T` is an unmanaged C# cell value, such as `bool`, `int`, or a custom unmanaged struct. `K` is the numeric type for local sparse-chunk coordinates and must hold `0` through `chunkSize - 1`. For a size-16 Boolean world, use `sbyte` for `K` and `bool` for `T`.
+The API uses two type parameters. `K` is the numeric type for local sparse-chunk coordinates and must hold `0` through `chunkSize - 1`. `T` is the cell value: it must be unmanaged in the Fast family and is unconstrained in the managed family. For a size-16 Boolean Fast world, `sbyte` and `bool` work as `K` and `T`.
 
-## Create, edit, and serialize a 3D world
+## Create, edit, and serialize a Fast 3D world
 
 Place the statements in a method; put the `using` directives at the top of its C# file.
 
@@ -15,8 +15,8 @@ using System.Collections.Generic;
 using PiDev.VoxelCore;
 
 var area = new Range3D(-5, 5, 0, 1, -5, 5);
-var world = new World3D<sbyte, bool>(
-    _ => new SparseChunk3D<sbyte, bool>(16, false),
+var world = new World3DFast<sbyte, bool>(
+    _ => new SparseChunk3DFast<sbyte, bool>(16, false),
     chunkSize: 16);
 
 foreach (var point in area)
@@ -32,18 +32,18 @@ foreach (var entry in world.EnumerateChunks())
 var deserializer = new ChunkDeserializer3D<sbyte, bool>(world.ChunkSize);
 foreach (var entry in serializedChunks)
 {
-    IChunk3D<bool> chunk = deserializer.Deserialize(entry.Value, optimize: false);
+    IChunk3DFast<bool> chunk = deserializer.Deserialize(entry.Value, optimize: false);
     // entry.Key locates this chunk in the world; save it alongside the bytes.
 }
 ```
 
-`World3D` exposes its chunks through `EnumerateChunks()`, not a public `chunks` field. Save each chunk key and the world chunk size separately: neither is part of the chunk byte array. The current world API does not expose a method for inserting a deserialized chunk back into its private dictionary.
+`World3DFast` exposes its chunks through `EnumerateChunks()`, not a public `chunks` field. Save each chunk key and the world chunk size separately: neither is part of the chunk byte array. The current world API does not expose a method for inserting a deserialized chunk back into its private dictionary.
 
-## 2D storage
+## Fast 2D storage
 
 ```csharp
-var world = new World2D<byte, int>(
-    _ => new SparseChunk2D<byte, int>(16, 0),
+var world = new World2DFast<byte, int>(
+    _ => new SparseChunk2DFast<byte, int>(16, 0),
     chunkSize: 16,
     defaultValue: 0);
 
@@ -54,12 +54,37 @@ var serializer = world.GetSerializer(null);
 foreach (var entry in world.EnumerateChunks())
 {
     byte[] data = serializer.SerializeOptimal(entry.Value, exact: true);
-    IChunk2D<int> restored = new ChunkDeserializer2D<byte, int>(16)
+    IChunk2DFast<int> restored = new ChunkDeserializer2D<byte, int>(16)
         .Deserialize(data, optimize: false);
 }
 ```
 
 `GetSerializer(replacements)` can remap values as it writes. `GetFastSerializer()` writes concrete dense or sparse chunks directly without replacements.
+
+## Managed values
+
+```csharp
+using System;
+using PiDev.VoxelCore;
+
+var world = new World3D<byte, string>(
+    _ => new SparseChunk3D<byte, string>(16, "empty", StringComparer.Ordinal),
+    chunkSize: 16,
+    defaultValue: "empty");
+world[0, 0, 0] = "stone";
+world.OptimizeAllChunks();
+```
+
+Managed chunks default to `EqualityComparer<T>.Default` when no comparer is supplied. For a custom representation, supply a `GenericSerializer<IChunk3D<T>>` or `GenericSerializer<IChunk2D<T>>` to the chunk constructor. Its two caller-defined functions convert an entire chunk to bytes and bytes back to a chunk:
+
+```csharp
+var codec = new GenericSerializer<IChunk3D<string>>(SerializeChunk, DeserializeChunk);
+var chunk = new SparseChunk3D<byte, string>(16, "empty", StringComparer.Ordinal, codec);
+byte[] bytes = chunk.Serialize();
+IChunk3D<string> restored = codec.Deserialize(bytes);
+```
+
+`SerializeChunk` and `DeserializeChunk` are application-provided functions. Without a codec, `chunk.Serialize()` throws `NotSupportedException`. Deserialization lives on the codec because C# 10 cannot require a static `Deserialize` method on the chunk interface.
 
 `SerializeOptimal(chunk, exact)` has two selection modes:
 
@@ -72,11 +97,11 @@ foreach (var entry in world.EnumerateChunks())
 
 Dense chunks allocate their cell buffer on the first write. Before then, all cells read as `DefaultValue`. Sparse chunks store only cells different from `DefaultValue`; setting a cell to that value removes its entry.
 
-`DenseChunk2D/3D.Optimize` and `SparseChunk2D/3D.Optimize` return the same chunk when no conversion helps, a replacement chunk when one helps, or `null` when all cells equal the supplied default and the chunk can be removed. Without an argument, a chunk may choose its most common value as its new sparse default. Worlds always pass their own `defaultValue` and remove entries for which optimization returns `null`. `OptimizeAllChunks()` applies that behavior to all loaded chunks.
+`Optimize` returns the same chunk when no conversion helps, a replacement chunk when one helps, or `null` when all cells equal an explicitly supplied default and the chunk can be removed. Without an argument, a chunk may choose its most common value as its new sparse default. Worlds always pass their own `defaultValue` and remove entries for which optimization returns `null`. `OptimizeAllChunks()` applies that behavior to all loaded chunks. Managed dense chunks convert to sparse only when fewer than one quarter of cells differ from the chosen default.
 
 `Range2D` and `Range3D` include both minimum and maximum coordinates in containment checks and enumeration. Their `width`, `height`, and `depth` properties are `max - min`, rather than the number of integer positions visited.
 
-## Chunk byte formats
+## Fast chunk byte formats
 
 Every byte array begins with a one-byte format number and a raw `T` default value. Cell data uses x as the fastest-varying coordinate.
 

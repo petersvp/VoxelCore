@@ -1,18 +1,19 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
 {
     /// <summary>A 3D chunk that stores only cells different from its default value.</summary>
-    /// <remarks>Assigning the default removes a stored entry. TrySet returns whether it changed storage for a default assignment.</remarks>
+    /// <remarks>Assigning the default removes a stored entry. TrySet returns whether it changed storage for a default assignment. Cell operations may run concurrently; callers must coordinate changes to Size or DefaultValue and optimization or conversion with writes.</remarks>
     /// <example><![CDATA[
-    /// var chunk = new SparseChunk3D<byte, int>(16, 0);
+    /// var chunk = new SparseChunk3DFast<byte, int>(16, 0);
     /// chunk[2, 3, 4] = 7;
-    /// IChunk3D<int>? optimized = chunk.Optimize(0); // Null means this chunk can be discarded.
+    /// IChunk3DFast<int>? optimized = chunk.Optimize(0); // Null means this chunk can be discarded.
     /// ]]></example>
     public class SparseChunk3DFast<K, T> : IChunk3DFast<T> where T : unmanaged where K : unmanaged
     {
-        internal Dictionary<(K, K, K), T> tiles = new();
+        internal ConcurrentDictionary<(K, K, K), T> tiles = new();
         /// <summary>Backing field for DefaultValue.</summary>
         public T defaultValue;
         /// <summary>Value returned for cells absent from the sparse dictionary.</summary>
@@ -43,7 +44,7 @@ namespace PiDev.VoxelCore
             {
                 CheckBounds(x, y, z);
                 var key = (ToKey(x), ToKey(y), ToKey(z));
-                if (value.Equals(DefaultValue)) tiles.Remove(key);
+                if (value.Equals(DefaultValue)) tiles.TryRemove(key, out _);
                 else tiles[key] = value;
             }
         }
@@ -76,7 +77,7 @@ namespace PiDev.VoxelCore
         {
             if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) return false;
             var key = (ToKey(x), ToKey(y), ToKey(z));
-            if (value.Equals(DefaultValue)) return tiles.Remove(key);
+            if (value.Equals(DefaultValue)) return tiles.TryRemove(key, out _);
             tiles[key] = value;
             return true;
         }

@@ -1,33 +1,37 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace PiDev.VoxelCore
 {
     /// <summary>A lazily created grid of 3D chunks addressed by world coordinates.</summary>
+    /// <remarks>The chunk map supports concurrent access, but callers must coordinate simultaneous access to each chunk's cells and mutable world settings.</remarks>
     /// <example><![CDATA[
-    /// var world = new World3D<sbyte, bool>(_ => new SparseChunk3D<sbyte, bool>(16, false));
-    /// world[-1, 0, 2] = true;
+    /// var world = new World3D<sbyte, string>(_ => new SparseChunk3D<sbyte, string>(16, "empty"));
+    /// world[-1, 0, 2] = "stone";
     /// world.OptimizeAllChunks();
     /// foreach (var entry in world.EnumerateChunks())
     /// {
-    ///     byte[] data = world.GetSerializer(null).SerializeOptimal(entry.Value, true);
+    ///     IChunk3D<string> chunk = entry.Value;
     /// }
     /// ]]></example>
-    public class World3D<K, T> where T : unmanaged where K : unmanaged
+    public class World3D<K, T> where K : unmanaged
     {
         /// <summary>Value returned outside bounds and passed to chunk optimization.</summary>
         public T defaultValue;
 
-        private readonly Dictionary<(int, int, int), IChunk3D<T>> chunks = new();
+        private readonly ConcurrentDictionary<(int, int, int), IChunk3D<T>> chunks = new();
 
         /// <summary>Creates a chunk for the supplied inclusive world-space range.</summary>
+        /// <remarks>Concurrent first access can call the factory more than once for the same coordinate; only one result is stored.</remarks>
         public delegate IChunk3D<T> ChunkFactoryDelegate(Range3D range);
         private readonly ChunkFactoryDelegate chunkFactory;
         private readonly int chunkSize;
         /// <summary>Side length of each cubic chunk.</summary>
         public int ChunkSize => chunkSize;
 
-        /// <summary>Enumerates chunks already created by this world and their chunk-coordinate keys.</summary>
+        /// <summary>Enumerates chunks already created by this world and their chunk-coordinate keys. Concurrent changes may appear during enumeration.</summary>
         public IEnumerable<KeyValuePair<(int x, int y, int z), IChunk3D<T>>> EnumerateChunks()
         {
             foreach (var kv in chunks) yield return kv;
@@ -45,19 +49,23 @@ namespace PiDev.VoxelCore
         {
             this.chunkFactory = factory;
             this.chunkSize = chunkSize;
+            defaultValue = default!;
+        }
+
+        /// <summary>Creates a world with an explicit default value, including null or default(T).</summary>
+        public World3D(ChunkFactoryDelegate factory, int chunkSize, T defaultValue)
+        {
+            this.chunkFactory = factory;
+            this.chunkSize = chunkSize;
+            this.defaultValue = defaultValue;
         }
 
         private IChunk3D<T> GetChunk(int chunkX, int chunkY, int chunkZ)
         {
-            if (!chunks.TryGetValue((chunkX, chunkY, chunkZ), out var chunk))
-            {
-                chunk = chunkFactory(new Range3D(
-                    chunkX * chunkSize, (chunkX + 1) * chunkSize - 1,
-                    chunkY * chunkSize, (chunkY + 1) * chunkSize - 1,
-                    chunkZ * chunkSize, (chunkZ + 1) * chunkSize - 1));
-                chunks[(chunkX, chunkY, chunkZ)] = chunk;
-            }
-            return chunk;
+            return chunks.GetOrAdd((chunkX, chunkY, chunkZ), key => chunkFactory(new Range3D(
+                key.Item1 * chunkSize, (key.Item1 + 1) * chunkSize - 1,
+                key.Item2 * chunkSize, (key.Item2 + 1) * chunkSize - 1,
+                key.Item3 * chunkSize, (key.Item3 + 1) * chunkSize - 1)));
         }
 
         /// <summary>Gets or creates the chunk containing a world-space point.</summary>
@@ -133,7 +141,7 @@ namespace PiDev.VoxelCore
         /// <summary>Removes an existing chunk by chunk coordinates without creating one.</summary>
         public void RemoveSchunk(int chunkX, int chunkY, int chunkZ)
         {
-            chunks.Remove((chunkX, chunkY, chunkZ));
+            chunks.TryRemove((chunkX, chunkY, chunkZ), out _);
         }
 
         /// <summary>Optimizes an existing chunk against the world default and removes it when optimization returns null.</summary>
@@ -148,8 +156,10 @@ namespace PiDev.VoxelCore
                 optimized = sparseChunk.Optimize(defaultValue);
             else return;
 
-            if (optimized == null) chunks.Remove(key);
-            else if (!ReferenceEquals(optimized, chunk)) chunks[key] = optimized;
+            if (optimized == null)
+                ((ICollection<KeyValuePair<(int, int, int), IChunk3D<T>>>)chunks).Remove(new(key, chunk));
+            else if (!ReferenceEquals(optimized, chunk))
+                chunks.TryUpdate(key, optimized, chunk);
         }
 
         /// <summary>Applies OptimizeChunk to a snapshot of all loaded chunk keys.</summary>
@@ -159,16 +169,11 @@ namespace PiDev.VoxelCore
             foreach (var key in keys) OptimizeChunk(key.Item1, key.Item2, key.Item3);
         }
 
-        /// <summary>Creates a serializer with optional value replacements.</summary>
-        public ChunkSerializer3D<K, T> GetSerializer(Dictionary<T, T>? replacements)
+        /// <summary>Optimizes a snapshot of loaded chunk keys in parallel. Callers must coordinate access to each chunk and changes to world settings while it is being optimized.</summary>
+        public void OptimizeAllChunksParallel()
         {
-            return new ChunkSerializer3D<K, T>(replacements);
+            Parallel.ForEach(chunks.Keys, key => OptimizeChunk(key.Item1, key.Item2, key.Item3));
         }
 
-        /// <summary>Creates a direct serializer for concrete dense or sparse chunks without replacements.</summary>
-        public ChunkBlitSerializer3D<K, T> GetFastSerializer()
-        {
-            return new ChunkBlitSerializer3D<K, T>();
-        }
     }
 }
