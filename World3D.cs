@@ -3,193 +3,7 @@ using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
 {
-    public class SparseChunk3D<T> : IChunk3D<T> where T : unmanaged
-    {
-        internal Dictionary<(int, int, int), T> tiles = new();
-        public int Size { get; }
-        public T defaultValue;
-        public T DefaultValue { get => defaultValue; set => defaultValue = value; }
-        public object userdata { get; set; }
-
-        public SparseChunk3D(int size, T defaultValue)
-        {
-            if (size <= 0) throw new ArgumentOutOfRangeException(nameof(size));
-            Size = size;
-            DefaultValue = defaultValue;
-        }
-
-        public SparseChunk3D(T defaultValue) : this(16, defaultValue) { }
-
-        public SparseChunk3D() : this(16, default) { }
-
-        public T this[int x, int y, int z]
-        {
-            get
-            {
-                CheckBounds(x, y, z);
-                return tiles.TryGetValue((x, y, z), out T value) ? value : DefaultValue;
-            }
-            set
-            {
-                CheckBounds(x, y, z);
-                if (value.Equals(DefaultValue)) tiles.Remove((x, y, z));
-                else tiles[(x, y, z)] = value;
-            }
-        }
-
-        private void CheckBounds(int x, int y, int z)
-        {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size)
-                throw new IndexOutOfRangeException();
-        }
-
-        public bool TryGet(int x, int y, int z, out T value)
-        {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size)
-            {
-                value = DefaultValue;
-                return false;
-            }
-            return tiles.TryGetValue((x, y, z), out value);
-        }
-
-        public bool TrySet(int x, int y, int z, T value)
-        {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) return false;
-            this[x, y, z] = value;
-            return true;
-        }
-
-        public IEnumerable<(int x, int y, int z, T value)> Enumerate(bool includeDefault = false)
-        {
-            if (includeDefault)
-            {
-                for (int x = 0; x < Size; x++)
-                    for (int y = 0; y < Size; y++)
-                        for (int z = 0; z < Size; z++)
-                            yield return (x, y, z, this[x, y, z]);
-                yield break;
-            }
-            foreach (var kvp in tiles)
-                yield return (kvp.Key.Item1, kvp.Key.Item2, kvp.Key.Item3, kvp.Value);
-        }
-
-        public void Optimize()
-        {
-            int total = checked(Size * Size * Size);
-            var frequency = new Dictionary<T, int> { [DefaultValue] = total - tiles.Count };
-            foreach (var value in tiles.Values)
-            {
-                frequency.TryGetValue(value, out int count);
-                frequency[value] = count + 1;
-            }
-            T mostCommonValue = DefaultValue;
-            foreach (var kvp in frequency)
-                if (kvp.Value > frequency[mostCommonValue]) mostCommonValue = kvp.Key;
-            if (mostCommonValue.Equals(DefaultValue)) return;
-
-            var replacement = new Dictionary<(int, int, int), T>();
-            for (int x = 0; x < Size; x++)
-                for (int y = 0; y < Size; y++)
-                    for (int z = 0; z < Size; z++)
-                    {
-                        T value = this[x, y, z];
-                        if (!value.Equals(mostCommonValue)) replacement[(x, y, z)] = value;
-                    }
-            tiles = replacement;
-            DefaultValue = mostCommonValue;
-        }
-
-        public DenseChunk3D<T> ToDenseChunk()
-        {
-            var denseChunk = new DenseChunk3D<T>(Size, DefaultValue);
-            foreach (var kvp in tiles)
-                denseChunk[kvp.Key.Item1, kvp.Key.Item2, kvp.Key.Item3] = kvp.Value;
-            return denseChunk;
-        }
-
-        public DenseChunk3D<T> ToDenseChunk(int size)
-        {
-            var denseChunk = new DenseChunk3D<T>(size, DefaultValue);
-            foreach (var kvp in tiles)
-                denseChunk[kvp.Key.Item1, kvp.Key.Item2, kvp.Key.Item3] = kvp.Value;
-            return denseChunk;
-        }
-    }
-
-    public class DenseChunk3D<T> : IChunk3D<T> where T : unmanaged
-    {
-        internal readonly T[,,] tiles;
-        public int Size { get; }
-        public T DefaultValue { get; set; }
-        public object userdata { get; set; }
-
-        public DenseChunk3D(int size = 16, T defaultValue = default)
-        {
-            if (size <= 0) throw new ArgumentOutOfRangeException(nameof(size));
-            Size = size;
-            DefaultValue = defaultValue;
-            tiles = new T[size, size, size];
-            if (!defaultValue.Equals(default(T)))
-                for (int x = 0; x < size; x++)
-                    for (int y = 0; y < size; y++)
-                        for (int z = 0; z < size; z++)
-                            tiles[x, y, z] = defaultValue;
-        }
-
-        public T this[int x, int y, int z]
-        {
-            get => tiles[x, y, z];
-            set => tiles[x, y, z] = value;
-        }
-
-        public bool TryGet(int x, int y, int z, out T value)
-        {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size)
-            {
-                value = DefaultValue;
-                return false;
-            }
-            value = tiles[x, y, z];
-            return true;
-        }
-
-        public bool TrySet(int x, int y, int z, T value)
-        {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) return false;
-            tiles[x, y, z] = value;
-            return true;
-        }
-
-        public IEnumerable<(int x, int y, int z, T value)> Enumerate(bool includeDefault = false)
-        {
-            for (int x = 0; x < Size; x++)
-                for (int y = 0; y < Size; y++)
-                    for (int z = 0; z < Size; z++)
-                    {
-                        T value = tiles[x, y, z];
-                        if (includeDefault || !value.Equals(DefaultValue))
-                            yield return (x, y, z, value);
-                    }
-        }
-
-        public SparseChunk3D<T> ToSparseChunk() => ToSparseChunk(DefaultValue);
-
-        public SparseChunk3D<T> ToSparseChunk(T defaultValue)
-        {
-            var sparseChunk = new SparseChunk3D<T>(Size, defaultValue);
-            for (int x = 0; x < Size; x++)
-                for (int y = 0; y < Size; y++)
-                    for (int z = 0; z < Size; z++)
-                    {
-                        T value = tiles[x, y, z];
-                        if (!value.Equals(defaultValue)) sparseChunk[x, y, z] = value;
-                    }
-            return sparseChunk;
-        }
-    }
-
-    public class World3D<T> where T : unmanaged
+    public class World3D<K, T> where T : unmanaged where K : unmanaged
     {
         private readonly Dictionary<(int, int, int), IChunk3D<T>> chunks = new();
         private readonly Func<IChunk3D<T>> chunkFactory;
@@ -282,14 +96,14 @@ namespace PiDev.VoxelCore
             chunks.Remove((chunkX, chunkY, chunkZ));
         }
 
-        public ChunkSerializer3D<T> GetSerializer(Dictionary<T, T>? replacements)
+        public ChunkSerializer3D<K, T> GetSerializer(Dictionary<T, T>? replacements)
         {
-            return new ChunkSerializer3D<T>(replacements);
+            return new ChunkSerializer3D<K, T>(replacements);
         }
 
-        public ChunkBlitSerializer3D<T> GetFastSerializer()
+        public ChunkBlitSerializer3D<K, T> GetFastSerializer()
         {
-            return new ChunkBlitSerializer3D<T>();
+            return new ChunkBlitSerializer3D<K, T>();
         }
     }
 }

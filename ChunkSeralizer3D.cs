@@ -3,10 +3,10 @@ using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
 {
-    public unsafe class ChunkSerializer3D<T> where T : unmanaged
+    public unsafe class ChunkSerializer3D<K, T> where K : unmanaged where T : unmanaged
     {
         private readonly Dictionary<T, T>? replacementTable;
-        private readonly ChunkBlitSerializer3D<T> blit = new();
+        private readonly ChunkBlitSerializer3D<K, T> blit = new();
 
         public ChunkSerializer3D() { }
 
@@ -23,7 +23,7 @@ namespace PiDev.VoxelCore
 
         public byte[] SerializeDense(IChunk3D<T> chunk)
         {
-            if (replacementTable == null && chunk is DenseChunk3D<T> dense)
+            if (replacementTable == null && chunk is DenseChunk3D<K, T> dense)
                 return blit.SerializeDense(dense);
 
             int cells = checked(chunk.Size * chunk.Size * chunk.Size);
@@ -48,10 +48,10 @@ namespace PiDev.VoxelCore
 
         public byte[] SerializeSparse(IChunk3D<T> chunk)
         {
-            if (replacementTable == null && chunk is SparseChunk3D<T> sparse)
+            if (replacementTable == null && chunk is SparseChunk3D<K, T> sparse)
                 return blit.SerializeSparse(sparse);
 
-            var converted = new SparseChunk3D<T>(chunk.Size, Replace(chunk.DefaultValue));
+            var converted = new SparseChunk3D<K, T>(chunk.Size, Replace(chunk.DefaultValue));
             foreach (var (x, y, z, value) in chunk.Enumerate())
                 converted[x, y, z] = Replace(value);
             return blit.SerializeSparse(converted);
@@ -91,7 +91,7 @@ namespace PiDev.VoxelCore
                             if (!first && value.Equals(previous)) { count++; continue; }
                             if (!first)
                             {
-                                ChunkBlitSerializer3D<T>.WriteInt32(target + offset, count);
+                                ChunkBlitSerializer3D<K, T>.WriteInt32(target + offset, count);
                                 Buffer.MemoryCopy(&previous, target + offset + 4, sizeof(T), sizeof(T));
                                 offset += entrySize;
                             }
@@ -101,7 +101,7 @@ namespace PiDev.VoxelCore
                         }
                 if (cells > 0)
                 {
-                    ChunkBlitSerializer3D<T>.WriteInt32(target + offset, count);
+                    ChunkBlitSerializer3D<K, T>.WriteInt32(target + offset, count);
                     Buffer.MemoryCopy(&previous, target + offset + 4, sizeof(T), sizeof(T));
                 }
             }
@@ -114,14 +114,14 @@ namespace PiDev.VoxelCore
             {
                 T defaultValue = Replace(chunk.DefaultValue);
                 int stored = 0;
-                if (replacementTable == null && chunk is SparseChunk3D<T> knownSparse)
+                if (replacementTable == null && chunk is SparseChunk3D<K, T> knownSparse)
                     stored = knownSparse.tiles.Count;
                 else
                     foreach (var (_, _, _, value) in chunk.Enumerate())
                         if (!Replace(value).Equals(defaultValue)) stored++;
 
                 long denseBytes = (long)chunk.Size * chunk.Size * chunk.Size * sizeof(T);
-                long sparseBytes = (long)stored * (3 * sizeof(int) + sizeof(T));
+                long sparseBytes = (long)stored * (3 * sizeof(K) + sizeof(T));
                 return sparseBytes < denseBytes ? SerializeSparse(chunk) : SerializeDense(chunk);
             }
 

@@ -2,10 +2,10 @@ using System;
 
 namespace PiDev.VoxelCore
 {
-    public unsafe class ChunkBlitSerializer3D<T> where T : unmanaged
+    public unsafe class ChunkBlitSerializer3D<K, T> where K : unmanaged where T : unmanaged
     {
         // [format][default value][cell data in x, y, z iteration order]
-        public byte[] SerializeDense(DenseChunk3D<T> chunk)
+        public byte[] SerializeDense(DenseChunk3D<K, T> chunk)
         {
             int cells = checked(chunk.Size * chunk.Size * chunk.Size);
             int bytes = checked(cells * sizeof(T));
@@ -22,9 +22,10 @@ namespace PiDev.VoxelCore
         }
 
         // [format][default value]{[x][y][z][value]}
-        public byte[] SerializeSparse(SparseChunk3D<T> chunk)
+        public byte[] SerializeSparse(SparseChunk3D<K, T> chunk)
         {
-            int entrySize = checked(3 * sizeof(int) + sizeof(T));
+            int keySize = sizeof(K);
+            int entrySize = checked(3 * keySize + sizeof(T));
             byte[] data = new byte[checked(1 + sizeof(T) + chunk.tiles.Count * entrySize)];
             fixed (byte* target = data)
             {
@@ -34,11 +35,14 @@ namespace PiDev.VoxelCore
                 int offset = 1 + sizeof(T);
                 foreach (var kvp in chunk.tiles)
                 {
-                    WriteInt32(target + offset, kvp.Key.Item1);
-                    WriteInt32(target + offset + 4, kvp.Key.Item2);
-                    WriteInt32(target + offset + 8, kvp.Key.Item3);
+                    K x = kvp.Key.Item1;
+                    K y = kvp.Key.Item2;
+                    K z = kvp.Key.Item3;
+                    Buffer.MemoryCopy(&x, target + offset, keySize, keySize);
+                    Buffer.MemoryCopy(&y, target + offset + keySize, keySize, keySize);
+                    Buffer.MemoryCopy(&z, target + offset + 2 * keySize, keySize, keySize);
                     T value = kvp.Value;
-                    Buffer.MemoryCopy(&value, target + offset + 12, sizeof(T), sizeof(T));
+                    Buffer.MemoryCopy(&value, target + offset + 3 * keySize, sizeof(T), sizeof(T));
                     offset += entrySize;
                 }
             }

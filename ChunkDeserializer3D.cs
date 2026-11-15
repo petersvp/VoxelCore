@@ -2,7 +2,7 @@ using System;
 
 namespace PiDev.VoxelCore
 {
-    public unsafe class ChunkDeserializer3D<T> where T : unmanaged
+    public unsafe class ChunkDeserializer3D<K, T> where K : unmanaged where T : unmanaged
     {
         private readonly int chunkSize;
 
@@ -38,7 +38,7 @@ namespace PiDev.VoxelCore
             if (data.Length != checked(1 + sizeof(T) + bytes))
                 throw new ArgumentException("Invalid dense chunk length", nameof(data));
 
-            var chunk = new DenseChunk3D<T>(chunkSize, defaultValue);
+            var chunk = new DenseChunk3D<K, T>(chunkSize, defaultValue);
             fixed (T* target = &chunk.tiles[0, 0, 0])
                 Buffer.MemoryCopy(source + 1 + sizeof(T), target, bytes, bytes);
             return optimize ? Optimize(chunk) : chunk;
@@ -46,21 +46,28 @@ namespace PiDev.VoxelCore
 
         private IChunk3D<T> DeserializeSparse(byte[] data, byte* source, T defaultValue)
         {
-            int entrySize = 3 * sizeof(int) + sizeof(T);
+            int keySize = sizeof(K);
+            int entrySize = 3 * keySize + sizeof(T);
             int offset = 1 + sizeof(T);
             if ((data.Length - offset) % entrySize != 0)
                 throw new ArgumentException("Invalid sparse chunk length", nameof(data));
 
-            var chunk = new SparseChunk3D<T>(chunkSize, defaultValue);
+            var chunk = new SparseChunk3D<K, T>(chunkSize, defaultValue);
             while (offset < data.Length)
             {
-                int x = ChunkBlitSerializer3D<T>.ReadInt32(source + offset);
-                int y = ChunkBlitSerializer3D<T>.ReadInt32(source + offset + 4);
-                int z = ChunkBlitSerializer3D<T>.ReadInt32(source + offset + 8);
+                K xKey = default;
+                K yKey = default;
+                K zKey = default;
+                Buffer.MemoryCopy(source + offset, &xKey, keySize, keySize);
+                Buffer.MemoryCopy(source + offset + keySize, &yKey, keySize, keySize);
+                Buffer.MemoryCopy(source + offset + 2 * keySize, &zKey, keySize, keySize);
+                int x = (int)Convert.ChangeType(xKey, typeof(int));
+                int y = (int)Convert.ChangeType(yKey, typeof(int));
+                int z = (int)Convert.ChangeType(zKey, typeof(int));
                 if ((uint)x >= (uint)chunkSize || (uint)y >= (uint)chunkSize || (uint)z >= (uint)chunkSize)
                     throw new ArgumentException("Sparse chunk coordinate out of range", nameof(data));
                 T value = default;
-                Buffer.MemoryCopy(source + offset + 12, &value, sizeof(T), sizeof(T));
+                Buffer.MemoryCopy(source + offset + 3 * keySize, &value, sizeof(T), sizeof(T));
                 chunk[x, y, z] = value;
                 offset += entrySize;
             }
@@ -75,13 +82,13 @@ namespace PiDev.VoxelCore
             if ((data.Length - offset) % entrySize != 0)
                 throw new ArgumentException("Invalid RLE chunk length", nameof(data));
 
-            var chunk = new DenseChunk3D<T>(chunkSize, defaultValue);
+            var chunk = new DenseChunk3D<K, T>(chunkSize, defaultValue);
             int index = 0;
             fixed (T* target = &chunk.tiles[0, 0, 0])
             {
                 while (offset < data.Length)
                 {
-                    int count = ChunkBlitSerializer3D<T>.ReadInt32(source + offset);
+                    int count = ChunkBlitSerializer3D<K, T>.ReadInt32(source + offset);
                     if (count <= 0 || count > cells - index)
                         throw new ArgumentException("Invalid RLE run length", nameof(data));
                     T value = default;
@@ -95,10 +102,10 @@ namespace PiDev.VoxelCore
             return optimize ? Optimize(chunk) : chunk;
         }
 
-        private IChunk3D<T> Optimize(DenseChunk3D<T> chunk)
+        private IChunk3D<T> Optimize(DenseChunk3D<K, T> chunk)
         {
             var sparse = chunk.ToSparseChunk();
-            long sparseBytes = (long)sparse.tiles.Count * (3 * sizeof(int) + sizeof(T));
+            long sparseBytes = (long)sparse.tiles.Count * (3 * sizeof(K) + sizeof(T));
             long denseBytes = (long)chunkSize * chunkSize * chunkSize * sizeof(T);
             return sparseBytes < denseBytes ? sparse : chunk;
         }
