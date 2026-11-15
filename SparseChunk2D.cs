@@ -7,21 +7,33 @@ using System.Threading.Tasks;
 
 namespace PiDev.VoxelCore
 {
-
+    /// <summary>A 2D chunk that stores only cells different from its default value.</summary>
+    /// <remarks>Assigning the default removes a stored entry. Enumerate yields stored entries only, even with includeDefault=true.</remarks>
+    /// <example><![CDATA[
+    /// var chunk = new SparseChunk2D<byte, int>(16, 0);
+    /// chunk[2, 3] = 7;
+    /// chunk[2, 3] = 0; // Removes the entry.
+    /// ]]></example>
     public class SparseChunk2D<K, T> : IChunk2D<T> where T : unmanaged where K : unmanaged
     {
         internal Dictionary<(K, K), T> tiles = new();
+        /// <summary>Value returned for cells absent from the sparse dictionary.</summary>
         public T DefaultValue { get; set; }
+        /// <summary>Caller-owned metadata carried into converted chunks.</summary>
         public object userdata { get; set; }
 
+        /// <summary>Side length of this square chunk.</summary>
         public int Size { get; set; }
 
+        /// <summary>Creates an initially empty sparse chunk.</summary>
         public SparseChunk2D(int size = 16, T defaultValue = default)
         {
             Size = size;
             DefaultValue = defaultValue;
         }
 
+        /// <summary>Reads a local cell, or stores/removes it when assigned a non-default/default value.</summary>
+        /// <remarks>This indexer does not check coordinates against Size.</remarks>
         public T this[int x, int y]
         {
             get
@@ -41,6 +53,8 @@ namespace PiDev.VoxelCore
             }
         }
 
+        /// <summary>Enumerates only explicitly stored cells.</summary>
+        /// <param name="includeDefault">Currently ignored for sparse 2D chunks.</param>
         public IEnumerable<(int x, int y, T value)> Enumerate(bool includeDefault = false)
         {
             // NOTE: includeDefault is intentionally ignored for sparse chunks (performance).
@@ -53,11 +67,13 @@ namespace PiDev.VoxelCore
             }
         }
         
+        /// <summary>Copies this chunk into a dense buffer of the same size.</summary>
         public DenseChunk2D<K, T> ToDenseChunk()
         {
             return ToDenseChunk(Size);
         }
 
+        /// <summary>Copies this chunk into a dense buffer whose side length is at least Size.</summary>
         public DenseChunk2D<K, T> ToDenseChunk(int size)
         {
             if (size <= 0 || size < Size) throw new ArgumentOutOfRangeException(nameof(size));
@@ -75,6 +91,9 @@ namespace PiDev.VoxelCore
             return denseChunk;
         }
 
+        /// <summary>Rebases the sparse default when that reduces the number of stored cells.</summary>
+        /// <param name="defaultValue">Target default when supplied; null lets the chunk choose its most common value.</param>
+        /// <returns>This if no rebase helps; a new sparse chunk if one helps; null when all cells match a supplied default or the current default.</returns>
         public IChunk2D<T>? Optimize(T? defaultValue = null)
         {
             int total = checked(Size * Size);
@@ -112,6 +131,8 @@ namespace PiDev.VoxelCore
             return replacement;
         }
 
+        /// <summary>Looks up an explicitly stored cell; returns false for a missing key.</summary>
+        /// <remarks>On a miss, value is default(T), not necessarily this chunk's DefaultValue. This method's direct key cast currently requires K to be int.</remarks>
         public bool TryGet(int x, int y, out T value)
         {
             K kx = (K)(object)x;
@@ -119,6 +140,9 @@ namespace PiDev.VoxelCore
             return tiles.TryGetValue((kx, ky), out value);
         }
 
+        /// <summary>Stores a non-default value, or removes a matching-default entry.</summary>
+        /// <remarks>This method's direct key cast currently requires K to be int.</remarks>
+        /// <returns>True for a stored non-default value, or whether an entry was removed for a default value.</returns>
         public bool TrySet(int x, int y, T value)
         {
             K kx = (K)(object)x;

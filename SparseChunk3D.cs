@@ -3,21 +3,35 @@ using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>A 3D chunk that stores only cells different from its default value.</summary>
+    /// <remarks>Assigning the default removes a stored entry. TrySet returns whether it changed storage for a default assignment.</remarks>
+    /// <example><![CDATA[
+    /// var chunk = new SparseChunk3D<byte, int>(16, 0);
+    /// chunk[2, 3, 4] = 7;
+    /// IChunk3D<int>? optimized = chunk.Optimize(0); // Null means this chunk can be discarded.
+    /// ]]></example>
     public class SparseChunk3D<K, T> : IChunk3D<T> where T : unmanaged where K : unmanaged
     {
         internal Dictionary<(K, K, K), T> tiles = new();
+        /// <summary>Backing field for DefaultValue.</summary>
         public T defaultValue;
+        /// <summary>Value returned for cells absent from the sparse dictionary.</summary>
         public T DefaultValue { get => defaultValue; set => defaultValue = value; }
+        /// <summary>Caller-owned metadata carried into converted chunks.</summary>
         public object userdata { get; set; }
 
+        /// <summary>Side length of this cubic chunk.</summary>
         public int Size { get; set; }
         
+        /// <summary>Creates an initially empty sparse chunk.</summary>
         public SparseChunk3D(int size, T defaultValue)
         {
             Size = size;
             DefaultValue = defaultValue;
         }
 
+        /// <summary>Reads a local cell, or stores/removes it when assigned a non-default/default value.</summary>
+        /// <remarks>Coordinates outside 0 through Size-1 throw.</remarks>
         public T this[int x, int y, int z]
         {
             get
@@ -44,6 +58,8 @@ namespace PiDev.VoxelCore
                 throw new IndexOutOfRangeException();
         }
 
+        /// <summary>Looks up an explicitly stored in-bounds cell; returns false on a miss or outside bounds.</summary>
+        /// <remarks>Outside bounds, value is DefaultValue. An in-bounds missing key yields default(T).</remarks>
         public bool TryGet(int x, int y, int z, out T value)
         {
             if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size)
@@ -54,6 +70,8 @@ namespace PiDev.VoxelCore
             return tiles.TryGetValue((ToKey(x), ToKey(y), ToKey(z)), out value);
         }
 
+        /// <summary>Stores a non-default in-bounds value, or removes a matching-default entry.</summary>
+        /// <returns>False outside bounds; otherwise true for a stored value or when an entry was removed.</returns>
         public bool TrySet(int x, int y, int z, T value)
         {
             if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) return false;
@@ -63,6 +81,8 @@ namespace PiDev.VoxelCore
             return true;
         }
 
+        /// <summary>Enumerates stored entries, or all cells when includeDefault is true.</summary>
+        /// <param name="includeDefault">True includes every cell; false yields dictionary entries only.</param>
         public IEnumerable<(int x, int y, int z, T value)> Enumerate(bool includeDefault = false)
         {
             if (includeDefault)
@@ -77,6 +97,9 @@ namespace PiDev.VoxelCore
                 yield return (ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3), kvp.Value);
         }
 
+        /// <summary>Rebases the sparse default when that reduces the number of stored cells.</summary>
+        /// <param name="defaultValue">Target default when supplied; null lets the chunk choose its most common value.</param>
+        /// <returns>This if no rebase helps; a new sparse chunk if one helps; null when all cells match a supplied default or the current default.</returns>
         public IChunk3D<T>? Optimize(T? defaultValue = null)
         {
             int total = checked(Size * Size * Size);
@@ -106,6 +129,7 @@ namespace PiDev.VoxelCore
             return replacement;
         }
 
+        /// <summary>Copies this chunk into a dense buffer of the same size.</summary>
         public DenseChunk3D<K, T> ToDenseChunk()
         {
             var denseChunk = new DenseChunk3D<K, T>(Size, DefaultValue);
@@ -115,6 +139,7 @@ namespace PiDev.VoxelCore
             return denseChunk;
         }
 
+        /// <summary>Copies this chunk into a dense buffer whose side length is at least Size.</summary>
         public DenseChunk3D<K, T> ToDenseChunk(int size)
         {
             if (size < Size) throw new ArgumentOutOfRangeException(nameof(size));

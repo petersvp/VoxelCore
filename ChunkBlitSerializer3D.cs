@@ -2,9 +2,17 @@ using System;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>Writes concrete 3D chunks directly from their unmanaged storage.</summary>
+    /// <remarks>No value replacement occurs. Packed XYZ coordinates are available only for size-16 sparse chunks.</remarks>
+    /// <example><![CDATA[
+    /// var chunk = new SparseChunk3D<byte, int>(16, 0);
+    /// chunk[1, 2, 3] = 7;
+    /// byte[] data = new ChunkBlitSerializer3D<byte, int>().SerializeSparse(chunk, true);
+    /// ]]></example>
     public unsafe class ChunkBlitSerializer3D<K, T> where K : unmanaged where T : unmanaged
     {
         // [format][default value][cell data with x varying fastest]
+        /// <summary>Copies a dense buffer as raw T values, or writes default-only bytes when it is null.</summary>
         public byte[] SerializeDense(DenseChunk3D<K, T> chunk)
         {
             if (chunk.tiles == null) return SerializeEmptyDense(chunk.DefaultValue);
@@ -35,6 +43,8 @@ namespace PiDev.VoxelCore
         }
 
         // Format 1: raw K x/y/z. Format 2: little-endian [xxxx yyyy zzzz 0000].
+        /// <summary>Copies stored sparse entries using raw K coordinates or packed size-16 coordinates.</summary>
+        /// <param name="packedXYZ">True packs XYZ into two bytes and requires Size to equal 16.</param>
         public byte[] SerializeSparse(SparseChunk3D<K, T> chunk, bool packedXYZ = false)
         {
             if (packedXYZ && chunk.Size != 16)

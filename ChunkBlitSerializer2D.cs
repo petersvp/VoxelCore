@@ -2,8 +2,15 @@ using System;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>Writes concrete 2D chunks directly from their unmanaged storage.</summary>
+    /// <remarks>No value replacement occurs. A dense chunk without a buffer uses the default-only format.</remarks>
+    /// <example><![CDATA[
+    /// var chunk = new DenseChunk2D<byte, int>(16, 0);
+    /// byte[] data = new ChunkBlitSerializer2D<byte, int>().SerializeDense(chunk);
+    /// ]]></example>
     public unsafe class ChunkBlitSerializer2D<K, T> where K : unmanaged where T : unmanaged
     {
+        /// <summary>Copies a dense buffer as raw T values, or writes default-only bytes when it is null.</summary>
         public byte[] SerializeDense(DenseChunk2D<K, T> chunk)
         {
             if (chunk.tiles == null) return SerializeEmptyDense(chunk.DefaultValue);
@@ -33,6 +40,8 @@ namespace PiDev.VoxelCore
         }
 
         // Format 1: raw K x/y. Format 2: packed [xxxx yyyy] for size-16 chunks.
+        /// <summary>Copies stored sparse entries using raw K coordinates or packed size-16 coordinates.</summary>
+        /// <param name="packedXY">True packs X and Y into one byte and requires Size to equal 16.</param>
         public byte[] SerializeSparse(SparseChunk2D<K, T> chunk, bool packedXY = false)
         {
             if (packedXY && chunk.Size != 16)

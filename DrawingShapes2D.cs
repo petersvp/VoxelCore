@@ -6,9 +6,19 @@ using System.Threading.Tasks;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>Integer point iterators and helpers for drawing 2D lines and splines.</summary>
+    /// <example><![CDATA[
+    /// var world = new World2D<byte, int>(_ => new SparseChunk2D<byte, int>(16, 0));
+    /// foreach (var point in DrawingShapes2D.Line((0, 0), (4, 2)))
+    ///     world[point.x, point.y] = 1;
+    /// ]]></example>
     public static class DrawingShapes2D
     {
 
+        /// <summary>Samples a rounded Catmull-Rom spline through a list of integer control points.</summary>
+        /// <param name="loop">True wraps the control points into a closed path.</param>
+        /// <param name="useLengths">True scales sampling density with Manhattan segment length.</param>
+        /// <param name="resolution">Samples per segment, or per length unit when useLengths is true.</param>
         public static List<(int x, int y)> GenerateCatmullRomSpline(List<(int x, int y)> controlPoints, bool loop, bool useLengths = false, float resolution = 10)
         {
             if (controlPoints == null || controlPoints.Count < 2)
@@ -61,7 +71,7 @@ namespace PiDev.VoxelCore
             return splinePoints.Distinct().ToList();
         }
 
-        // Catmull-Rom interpolation function (2D version)
+        /// <summary>Interpolates a point on the p1-to-p2 spline segment and rounds it to integers.</summary>
         public static (int x, int y) CatmullRom(float t, (int x, int y) p0, (int x, int y) p1, (int x, int y) p2, (int x, int y) p3)
         {
             float tt = t * t, ttt = tt * t;
@@ -72,10 +82,15 @@ namespace PiDev.VoxelCore
             return ((int)Math.Round(x), (int)Math.Round(y));
         }
 
-        // Utility to compute distance between two points
+        /// <summary>Returns Manhattan distance between two integer points.</summary>
         public static int Distance((int x, int y) a, (int x, int y) b) => Math.Abs(a.x - b.x) + Math.Abs(a.y - b.y);
 
 
+        /// <summary>Rasterizes sampled spline segments into unique integer points.</summary>
+        /// <remarks>The control-point enumerable is read more than once, so it must be repeatable.</remarks>
+        /// <param name="loop">True closes the path between the last and first sampled points.</param>
+        /// <param name="useLengths">True scales spline sampling with segment length.</param>
+        /// <param name="resolution">Spline sampling density.</param>
         public static IEnumerable<(int x, int y)> SplinePath(IEnumerable<(int x, int y)> controlPoints, bool loop, bool useLengths, int resolution)
         {
             if (controlPoints == null || !controlPoints.Any())
@@ -98,10 +113,13 @@ namespace PiDev.VoxelCore
             }
         }
 
+        /// <summary>Yields a raster line between two coordinate pairs, including both endpoints.</summary>
         public static IEnumerable<(int x, int y)> Line(int x0, int y0, int x1, int y1) =>
             Line((x0, y0), (x1, y1));
+        /// <summary>Yields a raster line from a tuple containing its endpoints.</summary>
         public static IEnumerable<(int x, int y)> Line(((int x, int y) start, (int x, int y) end) line) =>
             Line(line.start, line.end);
+        /// <summary>Yields a raster line between two points, including both endpoints.</summary>
         public static IEnumerable<(int x, int y)> Line((int x, int y) start, (int x, int y) end)
         {
             int x0 = start.x, y0 = start.y;
@@ -124,6 +142,9 @@ namespace PiDev.VoxelCore
 
 
 
+        /// <summary>Returns the first two candidate boundary intersections for a line through the range center.</summary>
+        /// <param name="angleDegrees">Line angle in degrees.</param>
+        /// <exception cref="InvalidOperationException">Fewer than two candidates are found.</exception>
         public static ((int x, int y) start, (int x, int y) end) GetSplittingLine(Range2D bounds, float angleDegrees)
         {
             double angle = angleDegrees * (Math.PI / 180.0); // Convert degrees to radians

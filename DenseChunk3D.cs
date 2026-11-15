@@ -4,15 +4,26 @@ using System.Runtime.InteropServices;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>A 3D chunk with a lazily allocated, contiguous unmanaged cell buffer.</summary>
+    /// <remarks>Cells are stored with x varying fastest. A null buffer represents a uniform default-valued chunk.</remarks>
+    /// <example><![CDATA[
+    /// var chunk = new DenseChunk3D<byte, int>(16, 0);
+    /// chunk[2, 3, 4] = 7;
+    /// IChunk3D<int>? optimized = chunk.Optimize(); // May be this, a sparse chunk, or null.
+    /// ]]></example>
     public unsafe class DenseChunk3D<K, T> : IChunk3D<T> where K : unmanaged where T : unmanaged
     {
         internal T* tiles;
         private readonly int size;
+        /// <summary>Value read from every cell before a buffer is allocated.</summary>
         public T DefaultValue { get; set; }
+        /// <summary>Caller-owned metadata carried into converted chunks.</summary>
         public object userdata { get; set; }
 
+        /// <summary>Side length of this cubic chunk.</summary>
         public int Size => size;
 
+        /// <summary>Creates a chunk whose buffer is initially unallocated.</summary>
         public DenseChunk3D(int size = 16, T defaultValue = default)
         {
             this.size = size;
@@ -22,6 +33,8 @@ namespace PiDev.VoxelCore
 
         private int GetIndex(int x, int y, int z) => (z * size * size) + (y * size) + x;
 
+        /// <summary>Reads or writes a local cell; the first write allocates and fills the buffer.</summary>
+        /// <remarks>Coordinates must be within 0 through Size-1; this pointer-backed indexer does not check bounds.</remarks>
         public T this[int x, int y, int z]
         {
             get => (tiles != null) ? tiles[GetIndex(x, y, z)] : DefaultValue;
@@ -37,6 +50,7 @@ namespace PiDev.VoxelCore
             }
         }
 
+        /// <summary>Counts all allocated cell values; returns an empty map while the buffer is null.</summary>
         public Dictionary<T, int> CountValues()
         {
             Dictionary<T, int> valueCounts = new Dictionary<T, int>();
@@ -51,6 +65,7 @@ namespace PiDev.VoxelCore
             return valueCounts;
         }
 
+        /// <summary>Reads a cell; returns false with DefaultValue if the buffer is still unallocated.</summary>
         public bool TryGet(int x, int y, int z, out T value)
         {
             if (tiles == null)
@@ -62,6 +77,7 @@ namespace PiDev.VoxelCore
             return true;
         }
 
+        /// <summary>Writes a cell, allocating the buffer if needed, and returns true.</summary>
         public bool TrySet(int x, int y, int z, T value)
         {
             if (tiles == null)
@@ -74,6 +90,8 @@ namespace PiDev.VoxelCore
             return true;
         }
 
+        /// <summary>Enumerates local cells, omitting default-valued cells unless requested.</summary>
+        /// <param name="includeDefault">True includes every cell; false yields only values different from DefaultValue.</param>
         public IEnumerable<(int x, int y, int z, T value)> Enumerate(bool includeDefault = false)
         {
             for (int z = 0; z < Size; z++)
@@ -86,8 +104,10 @@ namespace PiDev.VoxelCore
                     }
         }
 
+        /// <summary>Copies this chunk into sparse storage using its current DefaultValue.</summary>
         public SparseChunk3D<K, T> ToSparseChunk() => ToSparseChunk(DefaultValue);
 
+        /// <summary>Copies this chunk into sparse storage using a specified default value.</summary>
         public SparseChunk3D<K, T> ToSparseChunk(T defaultValue)
         {
             var sparseChunk = new SparseChunk3D<K, T>(Size, defaultValue);
@@ -102,6 +122,9 @@ namespace PiDev.VoxelCore
             return sparseChunk;
         }
 
+        /// <summary>Chooses sparse storage when it is smaller than the dense cell buffer.</summary>
+        /// <param name="defaultValue">Target default when supplied; null lets this chunk choose its most common value.</param>
+        /// <returns>This if conversion is not smaller; a new sparse chunk if it is; null when every cell matches a supplied default, or an empty chunk already matches its own default.</returns>
         public IChunk3D<T>? Optimize(T? defaultValue = null)
         {
             if (tiles == null)

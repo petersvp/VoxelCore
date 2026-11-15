@@ -3,16 +3,28 @@ using System.Runtime.InteropServices;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>Reads the 2D chunk formats written by the generic and blit serializers.</summary>
+    /// <remarks>The caller supplies the chunk size; it is not stored in the byte array. Pass optimize explicitly.</remarks>
+    /// <example><![CDATA[
+    /// var original = new SparseChunk2D<byte, int>(16, 0);
+    /// byte[] data = new ChunkSerializer2D<byte, int>().SerializeOptimal(original, true);
+    /// IChunk2D<int> restored = new ChunkDeserializer2D<byte, int>(16).Deserialize(data, false);
+    /// ]]></example>
     public unsafe class ChunkDeserializer2D<K, T> where K : unmanaged where T : unmanaged
     {
         private readonly int chunkSize;
 
+        /// <summary>Creates a reader for chunks with the supplied side length.</summary>
+        /// <param name="chunkSize">Required because serialized chunk bytes do not contain their size.</param>
         public ChunkDeserializer2D(int chunkSize)
         {
             if (chunkSize <= 0) throw new ArgumentOutOfRangeException(nameof(chunkSize));
             this.chunkSize = chunkSize;
         }
 
+        /// <summary>Reads a dense, sparse, RLE, or default-only 2D chunk.</summary>
+        /// <param name="data">Bytes written for the same K, T, and chunk size.</param>
+        /// <param name="optimize">True calls the decoded chunk's Optimize() and uses a replacement when returned; false keeps the encoded storage type. A null optimization result leaves the decoded chunk in place.</param>
         public IChunk2D<T> Deserialize(byte[] data, bool optimize)
         {
             if (data == null) throw new ArgumentNullException(nameof(data));

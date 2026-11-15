@@ -4,6 +4,11 @@ using System.IO;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>Streams unmanaged values into the size-dependent RLE chunk format.</summary>
+    /// <remarks>Serialize consumes any IEnumerable of exactly cells values once. It buffers at most eight runs for a control group.</remarks>
+    /// <example><![CDATA[
+    /// byte[] data = RLEEncoder.Serialize(new byte[] { 2, 2, 2, 5 }, (byte)0, 4);
+    /// ]]></example>
     public static unsafe class RLEEncoder
     {
         private static int PrefixBytes(int cells)
@@ -69,6 +74,10 @@ namespace PiDev.VoxelCore
             return (int)value + 1;
         }
 
+        /// <summary>Consumes exactly cells values once and writes whole-T RLE bytes.</summary>
+        /// <param name="values">Any single-pass enumerable in cell order.</param>
+        /// <param name="defaultValue">Default stored in the chunk header.</param>
+        /// <param name="cells">Expected value count; selects the run-count encoding.</param>
         public static byte[] Serialize<T>(IEnumerable<T> values, T defaultValue, int cells) where T : unmanaged
         {
             if (values == null) throw new ArgumentNullException(nameof(values));
@@ -110,6 +119,11 @@ namespace PiDev.VoxelCore
             return output.ToArray();
         }
 
+        /// <summary>Expands RLE payload from a complete chunk byte array into an allocated cell buffer.</summary>
+        /// <param name="source">Pointer to the beginning of the format-3 byte array.</param>
+        /// <param name="length">Number of available bytes, including format and default value.</param>
+        /// <param name="cells">Expected output cell count.</param>
+        /// <param name="target">Buffer with space for at least cells values.</param>
         public static void Deserialize<T>(byte* source, int length, int cells, T* target) where T : unmanaged
         {
             int offset = 1 + sizeof(T);

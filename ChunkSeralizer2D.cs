@@ -6,7 +6,13 @@ using System.Threading.Tasks;
 
 namespace PiDev.VoxelCore
 {
-    // KEEP COMMENTS [except this one]
+    /// <summary>Writes a 2D chunk as dense, sparse, or RLE bytes, with optional value replacements.</summary>
+    /// <remarks>SerializeOptimal with exact=true builds dense, sparse, and RLE encodings and returns the smallest.</remarks>
+    /// <example><![CDATA[
+    /// IChunk2D<int> chunk = new SparseChunk2D<byte, int>(16, 0);
+    /// chunk[1, 2] = 7;
+    /// byte[] data = new ChunkSerializer2D<byte, int>().SerializeOptimal(chunk, true);
+    /// ]]></example>
     public class ChunkSerializer2D<K, T> where K : unmanaged where T : unmanaged
     {
         // If replacementTable is set, while serializing,
@@ -16,7 +22,10 @@ namespace PiDev.VoxelCore
         Dictionary<T, T>? replacementTable = null;
         private readonly ChunkBlitSerializer2D<K, T> blit = new();
 
+        /// <summary>Creates a serializer that writes values unchanged.</summary>
         public ChunkSerializer2D() { replacementTable = null; }
+        /// <summary>Creates a serializer that substitutes values through the supplied table while writing.</summary>
+        /// <param name="replacement">Maps source values to serialized values; null writes them unchanged.</param>
         public ChunkSerializer2D(Dictionary<T, T>? replacement)
         {
             replacementTable = replacement;
@@ -28,6 +37,8 @@ namespace PiDev.VoxelCore
                 ? replaced : value;
         }
 
+        /// <summary>Writes every cell as a whole raw T value in x-first order.</summary>
+        /// <remarks>A dense chunk without an allocated buffer uses the default-only format instead.</remarks>
         public unsafe byte[] SerializeDense(IChunk2D<T> chunk)
         {
             if (chunk is DenseChunk2D<K, T> emptyDense && emptyDense.tiles == null)
@@ -54,6 +65,8 @@ namespace PiDev.VoxelCore
             return data;
         }
 
+        /// <summary>Writes non-default cells and their local coordinates.</summary>
+        /// <param name="packedXY">If true, packs X and Y into one byte; requires a size-16 chunk.</param>
         public unsafe byte[] SerializeSparse(IChunk2D<T> chunk, bool packedXY)
         {
             if (packedXY && chunk.Size != 16)
@@ -69,6 +82,7 @@ namespace PiDev.VoxelCore
             return blit.SerializeSparse(converted, packedXY);
         }
 
+        /// <summary>Writes runs of equal whole T values in x-first cell order.</summary>
         public unsafe byte[] SerializeRLE(IChunk2D<T> chunk)
         {
             if (chunk is DenseChunk2D<K, T> emptyDense && emptyDense.tiles == null)
@@ -85,6 +99,8 @@ namespace PiDev.VoxelCore
                     yield return Replace(chunk[x, y]);
         }
 
+        /// <summary>Selects a chunk encoding and returns its bytes.</summary>
+        /// <param name="exact">False estimates dense versus sparse size without building RLE. True serializes dense, sparse, and RLE and returns the shortest byte array.</param>
         public unsafe byte[] SerializeOptimal(IChunk2D<T> chunk, bool exact)
         {
             if (!exact)

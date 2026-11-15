@@ -3,13 +3,23 @@ using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
 {
+    /// <summary>Writes a 3D chunk as dense, sparse, or RLE bytes, with optional value replacements.</summary>
+    /// <remarks>SerializeOptimal with exact=true builds dense, sparse, and RLE encodings and returns the smallest.</remarks>
+    /// <example><![CDATA[
+    /// IChunk3D<int> chunk = new SparseChunk3D<byte, int>(16, 0);
+    /// chunk[1, 2, 3] = 7;
+    /// byte[] data = new ChunkSerializer3D<byte, int>().SerializeOptimal(chunk, true);
+    /// ]]></example>
     public class ChunkSerializer3D<K, T> where K : unmanaged where T : unmanaged
     {
         private readonly Dictionary<T, T>? replacementTable;
         private readonly ChunkBlitSerializer3D<K, T> blit = new();
 
+        /// <summary>Creates a serializer that writes values unchanged.</summary>
         public ChunkSerializer3D() { }
 
+        /// <summary>Creates a serializer that substitutes values through the supplied table while writing.</summary>
+        /// <param name="replacement">Maps source values to serialized values; null writes them unchanged.</param>
         public ChunkSerializer3D(Dictionary<T, T>? replacement)
         {
             replacementTable = replacement;
@@ -21,6 +31,8 @@ namespace PiDev.VoxelCore
                 ? replaced : value;
         }
 
+        /// <summary>Writes every cell as a whole raw T value with x varying fastest.</summary>
+        /// <remarks>A dense chunk without an allocated buffer uses the default-only format instead.</remarks>
         public unsafe byte[] SerializeDense(IChunk3D<T> chunk)
         {
             if (chunk is DenseChunk3D<K, T> emptyDense && emptyDense.tiles == null)
@@ -48,6 +60,8 @@ namespace PiDev.VoxelCore
             return data;
         }
 
+        /// <summary>Writes non-default cells and their local coordinates.</summary>
+        /// <param name="packedXYZ">If true, packs XYZ into two bytes; requires a size-16 chunk.</param>
         public unsafe byte[] SerializeSparse(IChunk3D<T> chunk, bool packedXYZ = false)
         {
             if (packedXYZ && chunk.Size != 16)
@@ -64,6 +78,7 @@ namespace PiDev.VoxelCore
         }
 
         // [format][default value][size-dependent RLE runs]
+        /// <summary>Writes runs of equal whole T values in x-first cell order.</summary>
         public unsafe byte[] SerializeRLE(IChunk3D<T> chunk)
         {
             if (chunk is DenseChunk3D<K, T> emptyDense && emptyDense.tiles == null)
@@ -80,6 +95,8 @@ namespace PiDev.VoxelCore
                         yield return Replace(chunk[x, y, z]);
         }
 
+        /// <summary>Selects a chunk encoding and returns its bytes.</summary>
+        /// <param name="exact">False estimates dense versus sparse size without building RLE. True serializes dense, sparse, and RLE and returns the shortest byte array.</param>
         public unsafe byte[] SerializeOptimal(IChunk3D<T> chunk, bool exact)
         {
             if (!exact)
