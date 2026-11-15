@@ -40,10 +40,8 @@ namespace PiDev.VoxelCore
             foreach (var kv in chunks) yield return kv;
         }
 
-        /// <summary>Whether tile reads and writes are limited to worldBounds.</summary>
-        public bool useBoundChecking;
-        /// <summary>Inclusive bounds applied when useBoundChecking is true.</summary>
-        public Range2D worldBounds;
+        /// <summary>Optional inclusive bounds for tile reads and writes; null disables bounds checking.</summary>
+        public Range2D? worldBounds;
 
         /// <summary>Creates a world that produces chunks on first access.</summary>
         /// <param name="factory">Receives the new chunk's inclusive world-space range.</param>
@@ -96,7 +94,7 @@ namespace PiDev.VoxelCore
         /// <summary>Reads a cell, creating its chunk unless the point is outside enabled bounds.</summary>
         public T GetTile(int worldX, int worldY)
         {
-            if (useBoundChecking && !worldBounds.Contains((worldX, worldY))) return defaultValue;
+            if (worldBounds is Range2D bounds && !bounds.Contains((worldX, worldY))) return defaultValue;
             (int chunkX, int chunkY, int localX, int localY) = GetChunkCoords(worldX, worldY);
             return GetChunk(chunkX, chunkY)[localX, localY];
         }
@@ -104,7 +102,7 @@ namespace PiDev.VoxelCore
         /// <summary>Writes a cell, creating its chunk unless the point is outside enabled bounds.</summary>
         public void SetTile(int worldX, int worldY, T value)
         {
-            if (useBoundChecking && !worldBounds.Contains((worldX, worldY))) return;
+            if (worldBounds is Range2D bounds && !bounds.Contains((worldX, worldY))) return;
             (int chunkX, int chunkY, int localX, int localY) = GetChunkCoords(worldX, worldY);
             GetChunk(chunkX, chunkY)[localX, localY] = value;
         }
@@ -112,7 +110,7 @@ namespace PiDev.VoxelCore
         /// <summary>Reads only an existing in-bounds chunk; returns false and the supplied fallback otherwise.</summary>
         public bool TryGetTile(int worldX, int worldY, out T value, T defaultValue)
         {
-            if (useBoundChecking && !worldBounds.Contains((worldX, worldY))) { value = defaultValue; return false; }
+            if (worldBounds is Range2D bounds && !bounds.Contains((worldX, worldY))) { value = defaultValue; return false; }
             (int chunkX, int chunkY, int localX, int localY) = GetChunkCoords(worldX, worldY);
             if (!chunks.TryGetValue((chunkX, chunkY), out var chunk))
             {
@@ -126,7 +124,7 @@ namespace PiDev.VoxelCore
         /// <summary>Writes only to an existing in-bounds chunk; returns false if none exists.</summary>
         public bool TrySetTile(int worldX, int worldY, T value)
         {
-            if (useBoundChecking && !worldBounds.Contains((worldX, worldY))) return false;
+            if (worldBounds is Range2D bounds && !bounds.Contains((worldX, worldY))) return false;
             (int chunkX, int chunkY, int localX, int localY) = GetChunkCoords(worldX, worldY);
             if (!chunks.TryGetValue((chunkX, chunkY), out var chunk))
                 return false;
@@ -135,8 +133,21 @@ namespace PiDev.VoxelCore
             return true;
         }
 
+        /// <summary>Inserts or replaces a chunk at chunk coordinates, or removes it when chunk is null.</summary>
+        /// <remarks>Callers must coordinate access to an existing chunk while replacing it.</remarks>
+        public void SetChunk(int chunkX, int chunkY, IChunk2DFast<T>? chunk)
+        {
+            if (chunk == null)
+            {
+                chunks.TryRemove((chunkX, chunkY), out _);
+                return;
+            }
+            if (chunk.Size != chunkSize) throw new ArgumentException("Chunk size must match the world chunk size.", nameof(chunk));
+            chunks[(chunkX, chunkY)] = chunk;
+        }
+
         /// <summary>Removes an existing chunk by chunk coordinates without creating one.</summary>
-        public void RemoveSchunk(int chunkX, int chunkY)
+        public void RemoveChunk(int chunkX, int chunkY)
         {
             chunks.TryRemove((chunkX, chunkY), out _);
         }

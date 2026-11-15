@@ -1,14 +1,12 @@
 # VoxelCore
 
-VoxelCore is a C# library for chunked 2D and 3D fields. It works in .NET and Unity without depending on `UnityEngine`. Worlds create chunks on demand and can mix dense and sparse storage.
+VoxelCore is a voxel data storage library for C#. It supports chunked 2D and 3D data fields of any type. Works in .NET and Unity without depending on `UnityEngine`. Worlds create chunks on demand and can mix dense, sparse and custom storage.
 
 There are two storage families. `World2DFast` and `World3DFast` use unmanaged cell values and provide the raw chunk serializers described below. `World2D` and `World3D` accept arbitrary C# values, including objects and null, in managed chunks. Managed chunks use a supplied comparer and an optional whole-chunk serializer.
 
 The API uses two type parameters. `K` is the numeric type for local sparse-chunk coordinates and must hold `0` through `chunkSize - 1`. `T` is the cell value: it must be unmanaged in the Fast family and is unconstrained in the managed family. For a size-16 Boolean Fast world, `sbyte` and `bool` work as `K` and `T`.
 
 ## Create, edit, and serialize a Fast 3D world
-
-Place the statements in a method; put the `using` directives at the top of its C# file.
 
 ```csharp
 using System.Collections.Generic;
@@ -37,7 +35,7 @@ foreach (var entry in serializedChunks)
 }
 ```
 
-`World3DFast` exposes its chunks through `EnumerateChunks()`, not a public `chunks` field. Save each chunk key and the world chunk size separately: neither is part of the chunk byte array. The current world API does not expose a method for inserting a deserialized chunk back into its private dictionary.
+`World3DFast` exposes its chunks through `EnumerateChunks()`. Save each chunk key and the world chunk size separately: neither is part of the chunk byte array. The current world API does not expose a method for inserting a deserialized chunk back into its private dictionary.
 
 ## Fast 2D storage
 
