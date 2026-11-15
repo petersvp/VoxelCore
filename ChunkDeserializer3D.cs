@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 
 namespace PiDev.VoxelCore
 {
@@ -39,8 +40,8 @@ namespace PiDev.VoxelCore
                 throw new ArgumentException("Invalid dense chunk length", nameof(data));
 
             var chunk = new DenseChunk3D<K, T>(chunkSize, defaultValue);
-            fixed (T* target = &chunk.tiles[0, 0, 0])
-                Buffer.MemoryCopy(source + 1 + sizeof(T), target, bytes, bytes);
+            chunk.tiles = (T*)Marshal.AllocHGlobal(bytes);
+            Buffer.MemoryCopy(source + 1 + sizeof(T), chunk.tiles, bytes, bytes);
             return optimize ? Optimize(chunk) : chunk;
         }
 
@@ -83,20 +84,19 @@ namespace PiDev.VoxelCore
                 throw new ArgumentException("Invalid RLE chunk length", nameof(data));
 
             var chunk = new DenseChunk3D<K, T>(chunkSize, defaultValue);
+            chunk.tiles = (T*)Marshal.AllocHGlobal(checked(cells * sizeof(T)));
             int index = 0;
-            fixed (T* target = &chunk.tiles[0, 0, 0])
+            T* target = chunk.tiles;
+            while (offset < data.Length)
             {
-                while (offset < data.Length)
-                {
-                    int count = ChunkBlitSerializer3D<K, T>.ReadInt32(source + offset);
-                    if (count <= 0 || count > cells - index)
-                        throw new ArgumentException("Invalid RLE run length", nameof(data));
-                    T value = default;
-                    Buffer.MemoryCopy(source + offset + 4, &value, sizeof(T), sizeof(T));
-                    int end = index + count;
-                    while (index < end) target[index++] = value;
-                    offset += entrySize;
-                }
+                int count = ChunkBlitSerializer3D<K, T>.ReadInt32(source + offset);
+                if (count <= 0 || count > cells - index)
+                    throw new ArgumentException("Invalid RLE run length", nameof(data));
+                T value = default;
+                Buffer.MemoryCopy(source + offset + 4, &value, sizeof(T), sizeof(T));
+                int end = index + count;
+                while (index < end) target[index++] = value;
+                offset += entrySize;
             }
             if (index != cells) throw new ArgumentException("Incomplete RLE chunk", nameof(data));
             return optimize ? Optimize(chunk) : chunk;

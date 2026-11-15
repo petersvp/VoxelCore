@@ -153,8 +153,7 @@ namespace PiDev.VoxelCore
 
         ~DenseChunk2D()
         {
-            if (tiles != null)
-                Marshal.FreeHGlobal((IntPtr)tiles);
+            if (tiles != null) Marshal.FreeHGlobal((IntPtr)tiles);
         }
     }
 

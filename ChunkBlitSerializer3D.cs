@@ -4,19 +4,23 @@ namespace PiDev.VoxelCore
 {
     public unsafe class ChunkBlitSerializer3D<K, T> where K : unmanaged where T : unmanaged
     {
-        // [format][default value][cell data in x, y, z iteration order]
+        // [format][default value][cell data with x varying fastest]
         public byte[] SerializeDense(DenseChunk3D<K, T> chunk)
         {
             int cells = checked(chunk.Size * chunk.Size * chunk.Size);
             int bytes = checked(cells * sizeof(T));
             byte[] data = new byte[checked(1 + sizeof(T) + bytes)];
             fixed (byte* target = data)
-            fixed (T* source = &chunk.tiles[0, 0, 0])
             {
                 target[0] = 0;
                 T defaultValue = chunk.DefaultValue;
                 Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
-                Buffer.MemoryCopy(source, target + 1 + sizeof(T), bytes, bytes);
+                byte* tileData = target + 1 + sizeof(T);
+                if (chunk.tiles != null)
+                    Buffer.MemoryCopy(chunk.tiles, tileData, bytes, bytes);
+                else
+                    for (int i = 0; i < cells; i++)
+                        Buffer.MemoryCopy(&defaultValue, tileData + i * sizeof(T), sizeof(T), sizeof(T));
             }
             return data;
         }

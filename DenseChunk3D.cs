@@ -1,59 +1,72 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace PiDev.VoxelCore
 {
-    public class DenseChunk3D<K, T> : IChunk3D<T> where K : unmanaged where T : unmanaged
+    public unsafe class DenseChunk3D<K, T> : IChunk3D<T> where K : unmanaged where T : unmanaged
     {
-        internal readonly T[,,] tiles;
-        public int Size { get; }
+        internal T* tiles;
+        private readonly int size;
         public T DefaultValue { get; set; }
         public object userdata { get; set; }
 
+        public int Size => size;
+
         public DenseChunk3D(int size = 16, T defaultValue = default)
         {
-            if (size <= 0) throw new ArgumentOutOfRangeException(nameof(size));
-            Size = size;
+            this.size = size;
             DefaultValue = defaultValue;
-            tiles = new T[size, size, size];
-            if (!defaultValue.Equals(default(T)))
-                for (int x = 0; x < size; x++)
-                    for (int y = 0; y < size; y++)
-                        for (int z = 0; z < size; z++)
-                            tiles[x, y, z] = defaultValue;
+            tiles = null;
         }
+
+        private int GetIndex(int x, int y, int z) => (z * size * size) + (y * size) + x;
 
         public T this[int x, int y, int z]
         {
-            get => tiles[x, y, z];
-            set => tiles[x, y, z] = value;
+            get => (tiles != null) ? tiles[GetIndex(x, y, z)] : DefaultValue;
+            set
+            {
+                if (tiles == null)
+                {
+                    tiles = (T*)Marshal.AllocHGlobal(checked(size * size * size * sizeof(T)));
+                    for (int i = 0; i < size * size * size; i++)
+                        tiles[i] = DefaultValue;
+                }
+                tiles[GetIndex(x, y, z)] = value;
+            }
         }
 
         public bool TryGet(int x, int y, int z, out T value)
         {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size)
+            if (tiles == null)
             {
                 value = DefaultValue;
                 return false;
             }
-            value = tiles[x, y, z];
+            value = tiles[GetIndex(x, y, z)];
             return true;
         }
 
         public bool TrySet(int x, int y, int z, T value)
         {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) return false;
-            tiles[x, y, z] = value;
+            if (tiles == null)
+            {
+                tiles = (T*)Marshal.AllocHGlobal(checked(size * size * size * sizeof(T)));
+                for (int i = 0; i < size * size * size; i++)
+                    tiles[i] = DefaultValue;
+            }
+            tiles[GetIndex(x, y, z)] = value;
             return true;
         }
 
         public IEnumerable<(int x, int y, int z, T value)> Enumerate(bool includeDefault = false)
         {
-            for (int x = 0; x < Size; x++)
+            for (int z = 0; z < Size; z++)
                 for (int y = 0; y < Size; y++)
-                    for (int z = 0; z < Size; z++)
+                    for (int x = 0; x < Size; x++)
                     {
-                        T value = tiles[x, y, z];
+                        T value = this[x, y, z];
                         if (includeDefault || !value.Equals(DefaultValue))
                             yield return (x, y, z, value);
                     }
@@ -65,28 +78,27 @@ namespace PiDev.VoxelCore
         {
             var sparseChunk = new SparseChunk3D<K, T>(Size, defaultValue);
             sparseChunk.userdata = userdata;
-            for (int x = 0; x < Size; x++)
+            for (int z = 0; z < Size; z++)
                 for (int y = 0; y < Size; y++)
-                    for (int z = 0; z < Size; z++)
+                    for (int x = 0; x < Size; x++)
                     {
-                        T value = tiles[x, y, z];
+                        T value = tiles != null ? tiles[GetIndex(x, y, z)] : DefaultValue;
                         if (!value.Equals(defaultValue)) sparseChunk[x, y, z] = value;
                     }
             return sparseChunk;
         }
 
-        public unsafe SparseChunk3D<K, T>? Optimize()
+        public SparseChunk3D<K, T>? Optimize()
         {
-            int total = checked(Size * Size * Size);
+            if (tiles == null) return null;
+            int total = checked(size * size * size);
             var frequency = new Dictionary<T, int>();
-            for (int x = 0; x < Size; x++)
-                for (int y = 0; y < Size; y++)
-                    for (int z = 0; z < Size; z++)
-                    {
-                        T value = tiles[x, y, z];
-                        frequency.TryGetValue(value, out int count);
-                        frequency[value] = count + 1;
-                    }
+            for (int i = 0; i < total; i++)
+            {
+                T value = tiles[i];
+                frequency.TryGetValue(value, out int count);
+                frequency[value] = count + 1;
+            }
 
             T mostCommonValue = DefaultValue;
             int mostCommonCount = 0;
@@ -101,6 +113,11 @@ namespace PiDev.VoxelCore
             long denseBytes = (long)total * sizeof(T);
             if (mostCommonCount * 5L <= total * 3L || sparseBytes >= denseBytes) return null;
             return ToSparseChunk(mostCommonValue);
+        }
+
+        ~DenseChunk3D()
+        {
+            if (tiles != null) Marshal.FreeHGlobal((IntPtr)tiles);
         }
     }
 }

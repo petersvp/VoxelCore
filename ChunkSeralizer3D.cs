@@ -34,9 +34,9 @@ namespace PiDev.VoxelCore
                 T defaultValue = Replace(chunk.DefaultValue);
                 Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
                 byte* current = target + 1 + sizeof(T);
-                for (int x = 0; x < chunk.Size; x++)
+                for (int z = 0; z < chunk.Size; z++)
                     for (int y = 0; y < chunk.Size; y++)
-                        for (int z = 0; z < chunk.Size; z++)
+                        for (int x = 0; x < chunk.Size; x++)
                         {
                             T value = Replace(chunk[x, y, z]);
                             Buffer.MemoryCopy(&value, current, sizeof(T), sizeof(T));
@@ -64,9 +64,9 @@ namespace PiDev.VoxelCore
             int runs = 0;
             T previous = default;
             bool first = true;
-            for (int x = 0; x < chunk.Size; x++)
+            for (int z = 0; z < chunk.Size; z++)
                 for (int y = 0; y < chunk.Size; y++)
-                    for (int z = 0; z < chunk.Size; z++)
+                    for (int x = 0; x < chunk.Size; x++)
                     {
                         T value = Replace(chunk[x, y, z]);
                         if (first || !value.Equals(previous)) { runs++; previous = value; first = false; }
@@ -83,9 +83,9 @@ namespace PiDev.VoxelCore
                 previous = default;
                 first = true;
                 int count = 0;
-                for (int x = 0; x < chunk.Size; x++)
+                for (int z = 0; z < chunk.Size; z++)
                     for (int y = 0; y < chunk.Size; y++)
-                        for (int z = 0; z < chunk.Size; z++)
+                        for (int x = 0; x < chunk.Size; x++)
                         {
                             T value = Replace(chunk[x, y, z]);
                             if (!first && value.Equals(previous)) { count++; continue; }
