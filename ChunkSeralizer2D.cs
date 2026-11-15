@@ -39,11 +39,11 @@ namespace PiDev.VoxelCore
 
         /// <summary>Writes every cell as a whole raw T value in x-first order.</summary>
         /// <remarks>A dense chunk without an allocated buffer uses the default-only format instead.</remarks>
-        public unsafe byte[] SerializeDense(IChunk2D<T> chunk)
+        public unsafe byte[] SerializeDense(IChunk2DFast<T> chunk)
         {
-            if (chunk is DenseChunk2D<K, T> emptyDense && emptyDense.tiles == null)
+            if (chunk is DenseChunk2DFast<K, T> emptyDense && emptyDense.tiles == null)
                 return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
-            if (replacementTable == null && chunk is DenseChunk2D<K, T> dense)
+            if (replacementTable == null && chunk is DenseChunk2DFast<K, T> dense)
                 return blit.SerializeDense(dense);
 
             int cells = checked(chunk.Size * chunk.Size);
@@ -67,32 +67,32 @@ namespace PiDev.VoxelCore
 
         /// <summary>Writes non-default cells and their local coordinates.</summary>
         /// <param name="packedXY">If true, packs X and Y into one byte; requires a size-16 chunk.</param>
-        public unsafe byte[] SerializeSparse(IChunk2D<T> chunk, bool packedXY)
+        public unsafe byte[] SerializeSparse(IChunk2DFast<T> chunk, bool packedXY)
         {
             if (packedXY && chunk.Size != 16)
                 throw new ArgumentException("Packed XY requires a chunk size of 16", nameof(chunk));
-            if (chunk is DenseChunk2D<K, T> emptyDense && emptyDense.tiles == null)
+            if (chunk is DenseChunk2DFast<K, T> emptyDense && emptyDense.tiles == null)
                 return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
-            if (replacementTable == null && chunk is SparseChunk2D<K, T> sparse)
+            if (replacementTable == null && chunk is SparseChunk2DFast<K, T> sparse)
                 return blit.SerializeSparse(sparse, packedXY);
 
-            var converted = new SparseChunk2D<K, T>(chunk.Size, Replace(chunk.DefaultValue));
+            var converted = new SparseChunk2DFast<K, T>(chunk.Size, Replace(chunk.DefaultValue));
             foreach (var (x, y, value) in chunk.Enumerate())
                 converted[x, y] = Replace(value);
             return blit.SerializeSparse(converted, packedXY);
         }
 
         /// <summary>Writes runs of equal whole T values in x-first cell order.</summary>
-        public unsafe byte[] SerializeRLE(IChunk2D<T> chunk)
+        public unsafe byte[] SerializeRLE(IChunk2DFast<T> chunk)
         {
-            if (chunk is DenseChunk2D<K, T> emptyDense && emptyDense.tiles == null)
+            if (chunk is DenseChunk2DFast<K, T> emptyDense && emptyDense.tiles == null)
                 return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
 
             int cells = checked(chunk.Size * chunk.Size);
             return RLEEncoder.Serialize(EnumerateValues(chunk), Replace(chunk.DefaultValue), cells);
         }
 
-        private IEnumerable<T> EnumerateValues(IChunk2D<T> chunk)
+        private IEnumerable<T> EnumerateValues(IChunk2DFast<T> chunk)
         {
             for (int y = 0; y < chunk.Size; y++)
                 for (int x = 0; x < chunk.Size; x++)
@@ -101,13 +101,13 @@ namespace PiDev.VoxelCore
 
         /// <summary>Selects a chunk encoding and returns its bytes.</summary>
         /// <param name="exact">False estimates dense versus sparse size without building RLE. True serializes dense, sparse, and RLE and returns the shortest byte array.</param>
-        public unsafe byte[] SerializeOptimal(IChunk2D<T> chunk, bool exact)
+        public unsafe byte[] SerializeOptimal(IChunk2DFast<T> chunk, bool exact)
         {
             if (!exact)
             {
                 T defaultValue = Replace(chunk.DefaultValue);
                 int stored = 0;
-                if (replacementTable == null && chunk is SparseChunk2D<K, T> knownSparse)
+                if (replacementTable == null && chunk is SparseChunk2DFast<K, T> knownSparse)
                     stored = knownSparse.tiles.Count;
                 else
                     foreach (var (_, _, value) in chunk.Enumerate())

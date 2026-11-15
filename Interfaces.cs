@@ -11,7 +11,7 @@ namespace PiDev.VoxelCore
     /// IChunk2D<int> chunk = new SparseChunk2D<byte, int>(16, 0);
     /// chunk[1, 2] = 7;
     /// ]]></example>
-    public interface IChunk2D<T> where T : unmanaged
+    public interface IChunk2DFast<T> where T : unmanaged
     {
         /// <summary>Side length of the square chunk.</summary>
         int Size { get; }
@@ -36,7 +36,7 @@ namespace PiDev.VoxelCore
     /// IChunk3D<bool> chunk = new SparseChunk3D<byte, bool>(16, false);
     /// chunk[1, 2, 3] = true;
     /// ]]></example>
-    public interface IChunk3D<T> where T : unmanaged
+    public interface IChunk3DFast<T> where T : unmanaged
     {
         /// <summary>Side length of the cubic chunk.</summary>
         int Size { get; }

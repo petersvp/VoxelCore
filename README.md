@@ -1,8 +1,10 @@
 # VoxelCore
 
-VoxelCore provides 2D and 3D chunked storage for unmanaged values. It has no Unity dependency. A world creates chunks through a factory when a coordinate is first accessed. Each world can hold both dense and sparse chunks.
+VoxelCore is a voxel-storage C# library for 2D and 3D voxel fields. It works in .NET and Unity without depending on `UnityEngine`. Worlds create chunks on demand, can mix dense and sparse storage, and serialize individual chunks to byte arrays.
 
-`K` is the numeric type used for local sparse-chunk coordinates; it must represent `0` through `chunkSize - 1`. `T` is the unmanaged cell value. For a size-16 Boolean world, `sbyte` and `bool` work as `K` and `T`.
+As of now, the voxel data is limited to unmanaged only types.
+
+The API uses two type parameters: `T` is an unmanaged C# cell value, such as `bool`, `int`, or a custom unmanaged struct. `K` is the numeric type for local sparse-chunk coordinates and must hold `0` through `chunkSize - 1`. For a size-16 Boolean world, use `sbyte` for `K` and `bool` for `T`.
 
 ## Create, edit, and serialize a 3D world
 

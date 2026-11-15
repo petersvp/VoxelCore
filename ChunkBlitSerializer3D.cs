@@ -13,7 +13,7 @@ namespace PiDev.VoxelCore
     {
         // [format][default value][cell data with x varying fastest]
         /// <summary>Copies a dense buffer as raw T values, or writes default-only bytes when it is null.</summary>
-        public byte[] SerializeDense(DenseChunk3D<K, T> chunk)
+        public byte[] SerializeDense(DenseChunk3DFast<K, T> chunk)
         {
             if (chunk.tiles == null) return SerializeEmptyDense(chunk.DefaultValue);
 
@@ -45,7 +45,7 @@ namespace PiDev.VoxelCore
         // Format 1: raw K x/y/z. Format 2: little-endian [xxxx yyyy zzzz 0000].
         /// <summary>Copies stored sparse entries using raw K coordinates or packed size-16 coordinates.</summary>
         /// <param name="packedXYZ">True packs XYZ into two bytes and requires Size to equal 16.</param>
-        public byte[] SerializeSparse(SparseChunk3D<K, T> chunk, bool packedXYZ = false)
+        public byte[] SerializeSparse(SparseChunk3DFast<K, T> chunk, bool packedXYZ = false)
         {
             if (packedXYZ && chunk.Size != 16)
                 throw new ArgumentException("Packed XYZ requires a chunk size of 16", nameof(chunk));
