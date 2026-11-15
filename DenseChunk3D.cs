@@ -37,6 +37,20 @@ namespace PiDev.VoxelCore
             }
         }
 
+        public Dictionary<T, int> CountValues()
+        {
+            Dictionary<T, int> valueCounts = new Dictionary<T, int>();
+            if (tiles == null) return valueCounts;
+            T* end = tiles + (size * size * size);
+            for (T* current = tiles; current < end; current++)
+            {
+                T value = *current;
+                if (valueCounts.ContainsKey(value)) valueCounts[value]++;
+                else valueCounts[value] = 1;
+            }
+            return valueCounts;
+        }
+
         public bool TryGet(int x, int y, int z, out T value)
         {
             if (tiles == null)
@@ -88,17 +102,12 @@ namespace PiDev.VoxelCore
             return sparseChunk;
         }
 
-        public SparseChunk3D<K, T>? Optimize()
+        public IChunk3D<T>? Optimize(T? defaultValue = null)
         {
-            if (tiles == null) return null;
+            if (tiles == null)
+                return !defaultValue.HasValue || defaultValue.Value.Equals(DefaultValue) ? null : this;
             int total = checked(size * size * size);
-            var frequency = new Dictionary<T, int>();
-            for (int i = 0; i < total; i++)
-            {
-                T value = tiles[i];
-                frequency.TryGetValue(value, out int count);
-                frequency[value] = count + 1;
-            }
+            var frequency = CountValues();
 
             T mostCommonValue = DefaultValue;
             int mostCommonCount = 0;
@@ -109,10 +118,14 @@ namespace PiDev.VoxelCore
                     mostCommonCount = kvp.Value;
                 }
 
-            long sparseBytes = (long)(total - mostCommonCount) * (3 * sizeof(K) + sizeof(T));
+            T targetDefault = defaultValue.HasValue ? defaultValue.Value : mostCommonValue;
+            frequency.TryGetValue(targetDefault, out int targetCount);
+            if (targetCount == total && (defaultValue.HasValue || targetDefault.Equals(DefaultValue))) return null;
+
+            long sparseBytes = (long)(total - targetCount) * (3 * sizeof(K) + sizeof(T));
             long denseBytes = (long)total * sizeof(T);
-            if (mostCommonCount * 5L <= total * 3L || sparseBytes >= denseBytes) return null;
-            return ToSparseChunk(mostCommonValue);
+            if (sparseBytes >= denseBytes) return this;
+            return ToSparseChunk(targetDefault);
         }
 
         ~DenseChunk3D()

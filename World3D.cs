@@ -5,27 +5,37 @@ namespace PiDev.VoxelCore
 {
     public class World3D<K, T> where T : unmanaged where K : unmanaged
     {
+        public T defaultValue;
+
         private readonly Dictionary<(int, int, int), IChunk3D<T>> chunks = new();
-        private readonly Func<IChunk3D<T>> chunkFactory;
+
+        public delegate IChunk3D<T> ChunkFactoryDelegate(Range3D range);
+        private readonly ChunkFactoryDelegate chunkFactory;
         private readonly int chunkSize;
         public int ChunkSize => chunkSize;
-
-        public World3D(Func<IChunk3D<T>> factory, int chunkSize = 16)
-        {
-            this.chunkFactory = factory;
-            this.chunkSize = chunkSize;
-        }
 
         public IEnumerable<KeyValuePair<(int x, int y, int z), IChunk3D<T>>> EnumerateChunks()
         {
             foreach (var kv in chunks) yield return kv;
         }
 
+        public bool useBoundChecking;
+        public Range3D worldBounds;
+
+        public World3D(ChunkFactoryDelegate factory, int chunkSize = 16)
+        {
+            this.chunkFactory = factory;
+            this.chunkSize = chunkSize;
+        }
+
         private IChunk3D<T> GetChunk(int chunkX, int chunkY, int chunkZ)
         {
             if (!chunks.TryGetValue((chunkX, chunkY, chunkZ), out var chunk))
             {
-                chunk = chunkFactory();
+                chunk = chunkFactory(new Range3D(
+                    chunkX * chunkSize, (chunkX + 1) * chunkSize - 1,
+                    chunkY * chunkSize, (chunkY + 1) * chunkSize - 1,
+                    chunkZ * chunkSize, (chunkZ + 1) * chunkSize - 1));
                 chunks[(chunkX, chunkY, chunkZ)] = chunk;
             }
             return chunk;
@@ -61,18 +71,21 @@ namespace PiDev.VoxelCore
 
         public T GetTile(int worldX, int worldY, int worldZ)
         {
+            if (useBoundChecking && !worldBounds.Contains((worldX, worldY, worldZ))) return defaultValue;
             (int chunkX, int chunkY, int chunkZ, int localX, int localY, int localZ) = GetChunkCoords(worldX, worldY, worldZ);
             return GetChunk(chunkX, chunkY, chunkZ)[localX, localY, localZ];
         }
 
         public void SetTile(int worldX, int worldY, int worldZ, T value)
         {
+            if (useBoundChecking && !worldBounds.Contains((worldX, worldY, worldZ))) return;
             (int chunkX, int chunkY, int chunkZ, int localX, int localY, int localZ) = GetChunkCoords(worldX, worldY, worldZ);
             GetChunk(chunkX, chunkY, chunkZ)[localX, localY, localZ] = value;
         }
 
         public bool TryGetTile(int worldX, int worldY, int worldZ, out T value, T defaultValue)
         {
+            if (useBoundChecking && !worldBounds.Contains((worldX, worldY, worldZ))) { value = defaultValue; return false; }
             (int chunkX, int chunkY, int chunkZ, int localX, int localY, int localZ) = GetChunkCoords(worldX, worldY, worldZ);
             if (!chunks.TryGetValue((chunkX, chunkY, chunkZ), out var chunk))
             {
@@ -85,13 +98,14 @@ namespace PiDev.VoxelCore
 
         public bool TrySetTile(int worldX, int worldY, int worldZ, T value)
         {
+            if (useBoundChecking && !worldBounds.Contains((worldX, worldY, worldZ))) return false;
             (int chunkX, int chunkY, int chunkZ, int localX, int localY, int localZ) = GetChunkCoords(worldX, worldY, worldZ);
             if (!chunks.TryGetValue((chunkX, chunkY, chunkZ), out var chunk)) return false;
             chunk[localX, localY, localZ] = value;
             return true;
         }
 
-        public void UnloadChunk(int chunkX, int chunkY, int chunkZ)
+        public void RemoveSchunk(int chunkX, int chunkY, int chunkZ)
         {
             chunks.Remove((chunkX, chunkY, chunkZ));
         }
@@ -100,15 +114,15 @@ namespace PiDev.VoxelCore
         {
             var key = (chunkX, chunkY, chunkZ);
             if (!chunks.TryGetValue(key, out var chunk)) return;
+            IChunk3D<T>? optimized;
             if (chunk is DenseChunk3D<K, T> denseChunk)
-            {
-                var sparseChunk = denseChunk.Optimize();
-                if (sparseChunk != null) chunks[key] = sparseChunk;
-            }
-            else if (chunk is SparseChunk3D<K, T> existingSparseChunk)
-            {
-                existingSparseChunk.Optimize();
-            }
+                optimized = denseChunk.Optimize(defaultValue);
+            else if (chunk is SparseChunk3D<K, T> sparseChunk)
+                optimized = sparseChunk.Optimize(defaultValue);
+            else return;
+
+            if (optimized == null) chunks.Remove(key);
+            else if (!ReferenceEquals(optimized, chunk)) chunks[key] = optimized;
         }
 
         public void OptimizeAllChunks()

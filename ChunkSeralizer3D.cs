@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
 {
-    public unsafe class ChunkSerializer3D<K, T> where K : unmanaged where T : unmanaged
+    public class ChunkSerializer3D<K, T> where K : unmanaged where T : unmanaged
     {
         private readonly Dictionary<T, T>? replacementTable;
         private readonly ChunkBlitSerializer3D<K, T> blit = new();
@@ -21,8 +21,10 @@ namespace PiDev.VoxelCore
                 ? replaced : value;
         }
 
-        public byte[] SerializeDense(IChunk3D<T> chunk)
+        public unsafe byte[] SerializeDense(IChunk3D<T> chunk)
         {
+            if (chunk is DenseChunk3D<K, T> emptyDense && emptyDense.tiles == null)
+                return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
             if (replacementTable == null && chunk is DenseChunk3D<K, T> dense)
                 return blit.SerializeDense(dense);
 
@@ -46,69 +48,39 @@ namespace PiDev.VoxelCore
             return data;
         }
 
-        public byte[] SerializeSparse(IChunk3D<T> chunk)
+        public unsafe byte[] SerializeSparse(IChunk3D<T> chunk, bool packedXYZ = false)
         {
+            if (packedXYZ && chunk.Size != 16)
+                throw new ArgumentException("Packed XYZ requires a chunk size of 16", nameof(chunk));
+            if (chunk is DenseChunk3D<K, T> emptyDense && emptyDense.tiles == null)
+                return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
             if (replacementTable == null && chunk is SparseChunk3D<K, T> sparse)
-                return blit.SerializeSparse(sparse);
+                return blit.SerializeSparse(sparse, packedXYZ);
 
             var converted = new SparseChunk3D<K, T>(chunk.Size, Replace(chunk.DefaultValue));
             foreach (var (x, y, z, value) in chunk.Enumerate())
                 converted[x, y, z] = Replace(value);
-            return blit.SerializeSparse(converted);
+            return blit.SerializeSparse(converted, packedXYZ);
         }
 
-        // [format][default value]{[run length][value]}
-        public byte[] SerializeRLE(IChunk3D<T> chunk)
+        // [format][default value][size-dependent RLE runs]
+        public unsafe byte[] SerializeRLE(IChunk3D<T> chunk)
         {
+            if (chunk is DenseChunk3D<K, T> emptyDense && emptyDense.tiles == null)
+                return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
             int cells = checked(chunk.Size * chunk.Size * chunk.Size);
-            int runs = 0;
-            T previous = default;
-            bool first = true;
+            return RLEEncoder.Serialize(EnumerateValues(chunk), Replace(chunk.DefaultValue), cells);
+        }
+
+        private IEnumerable<T> EnumerateValues(IChunk3D<T> chunk)
+        {
             for (int z = 0; z < chunk.Size; z++)
                 for (int y = 0; y < chunk.Size; y++)
                     for (int x = 0; x < chunk.Size; x++)
-                    {
-                        T value = Replace(chunk[x, y, z]);
-                        if (first || !value.Equals(previous)) { runs++; previous = value; first = false; }
-                    }
-
-            int entrySize = sizeof(int) + sizeof(T);
-            byte[] data = new byte[checked(1 + sizeof(T) + runs * entrySize)];
-            fixed (byte* target = data)
-            {
-                target[0] = 3;
-                T defaultValue = Replace(chunk.DefaultValue);
-                Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
-                int offset = 1 + sizeof(T);
-                previous = default;
-                first = true;
-                int count = 0;
-                for (int z = 0; z < chunk.Size; z++)
-                    for (int y = 0; y < chunk.Size; y++)
-                        for (int x = 0; x < chunk.Size; x++)
-                        {
-                            T value = Replace(chunk[x, y, z]);
-                            if (!first && value.Equals(previous)) { count++; continue; }
-                            if (!first)
-                            {
-                                ChunkBlitSerializer3D<K, T>.WriteInt32(target + offset, count);
-                                Buffer.MemoryCopy(&previous, target + offset + 4, sizeof(T), sizeof(T));
-                                offset += entrySize;
-                            }
-                            previous = value;
-                            count = 1;
-                            first = false;
-                        }
-                if (cells > 0)
-                {
-                    ChunkBlitSerializer3D<K, T>.WriteInt32(target + offset, count);
-                    Buffer.MemoryCopy(&previous, target + offset + 4, sizeof(T), sizeof(T));
-                }
-            }
-            return data;
+                        yield return Replace(chunk[x, y, z]);
         }
 
-        public byte[] SerializeOptimal(IChunk3D<T> chunk, bool exact)
+        public unsafe byte[] SerializeOptimal(IChunk3D<T> chunk, bool exact)
         {
             if (!exact)
             {
@@ -121,12 +93,13 @@ namespace PiDev.VoxelCore
                         if (!Replace(value).Equals(defaultValue)) stored++;
 
                 long denseBytes = (long)chunk.Size * chunk.Size * chunk.Size * sizeof(T);
-                long sparseBytes = (long)stored * (3 * sizeof(K) + sizeof(T));
-                return sparseBytes < denseBytes ? SerializeSparse(chunk) : SerializeDense(chunk);
+                bool packedXYZ = chunk.Size == 16;
+                long sparseBytes = (long)stored * ((packedXYZ ? sizeof(ushort) : 3 * sizeof(K)) + sizeof(T));
+                return sparseBytes < denseBytes ? SerializeSparse(chunk, packedXYZ) : SerializeDense(chunk);
             }
 
             byte[] dense = SerializeDense(chunk);
-            byte[] sparse = SerializeSparse(chunk);
+            byte[] sparse = SerializeSparse(chunk, chunk.Size == 16);
             byte[] rle = SerializeRLE(chunk);
             if (rle.Length < dense.Length && rle.Length < sparse.Length) return rle;
             return sparse.Length < dense.Length ? sparse : dense;

@@ -54,10 +54,13 @@ namespace PiDev.VoxelCore
 
         private (int chunkX, int chunkY, int localX, int localY) GetChunkCoords(int worldX, int worldY)
         {
-            int chunkX = Utilities.nfdiv(worldX, chunkSize);
-            int chunkY = Utilities.nfdiv(worldY, chunkSize);
-            int localX = (int)Utilities.nfmod(worldX, chunkSize);
-            int localY = (int)Utilities.nfmod(worldY, chunkSize);
+            int chunkX = worldX / chunkSize;
+            int chunkY = worldY / chunkSize;
+            int localX = worldX % chunkSize;
+            int localY = worldY % chunkSize;
+
+            if (localX < 0) { chunkX -= 1; localX += chunkSize; }
+            if (localY < 0) { chunkY -= 1; localY += chunkSize; }
             return (chunkX, chunkY, localX, localY);
         }
 
@@ -105,26 +108,30 @@ namespace PiDev.VoxelCore
             return true;
         }
 
+        public void RemoveSchunk(int chunkX, int chunkY)
+        {
+            chunks.Remove((chunkX, chunkY));
+        }
+
         public void OptimizeChunk(int chunkX, int chunkY)
         {
-            if (!chunks.TryGetValue((chunkX, chunkY), out var chunk)) return;
+            var key = (chunkX, chunkY);
+            if (!chunks.TryGetValue(key, out var chunk)) return;
+            IChunk2D<T>? optimized;
             if (chunk is DenseChunk2D<K, T> denseChunk)
-            {
-                var sparseChunk = denseChunk.Optimize() ?? new SparseChunk2D<K, T>(chunkSize, usePreferredDefaultValue ? defaultValue : denseChunk.DefaultValue);
-                chunks[(chunkX, chunkY)] = sparseChunk;
-            }
+                optimized = denseChunk.Optimize(defaultValue);
+            else if (chunk is SparseChunk2D<K, T> sparseChunk)
+                optimized = sparseChunk.Optimize(defaultValue);
+            else return;
+
+            if (optimized == null) chunks.Remove(key);
+            else if (!ReferenceEquals(optimized, chunk)) chunks[key] = optimized;
         }
 
         public void OptimizeAllChunks()
         {
-            foreach (var kvp in chunks)
-            {
-                if (kvp.Value is DenseChunk2D<K, T> denseChunk)
-                {
-                    var sparseChunk = denseChunk.Optimize() ?? new SparseChunk2D<K, T>(chunkSize, usePreferredDefaultValue ? defaultValue : denseChunk.DefaultValue);
-                    chunks[(kvp.Key.Item1, kvp.Key.Item2)] = sparseChunk;
-                }
-            }
+            var keys = new List<(int, int)>(chunks.Keys);
+            foreach (var key in keys) OptimizeChunk(key.Item1, key.Item2);
         }
 
         public ChunkSerializer2D<K, T> GetSerializer(Dictionary<T, T>? replacements)

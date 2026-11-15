@@ -1,58 +1,75 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
+using System;
 
 namespace PiDev.VoxelCore
 {
     public unsafe class ChunkBlitSerializer2D<K, T> where K : unmanaged where T : unmanaged
     {
-        public byte[] SerializeDense(DenseChunk2D<K,T> chunk)
+        public byte[] SerializeDense(DenseChunk2D<K, T> chunk)
         {
-            int size = chunk.Size;
-            int totalSize = 1 + sizeof(T) + (size * size * sizeof(T));
-            byte[] data = new byte[totalSize];
+            if (chunk.tiles == null) return SerializeEmptyDense(chunk.DefaultValue);
 
-            fixed (byte* ptr = data)
+            int cells = checked(chunk.Size * chunk.Size);
+            int bytes = checked(cells * sizeof(T));
+            byte[] data = new byte[checked(1 + sizeof(T) + bytes)];
+            fixed (byte* target = data)
             {
-                ptr[0] = 0; // Format identifier for Dense
-                *(T*)(ptr + 1) = chunk.DefaultValue; // Store default value
-
-                T* tilePtr = (T*)(ptr + 1 + sizeof(T));
-                Buffer.MemoryCopy(chunk.tiles, tilePtr, size * size * sizeof(T), size * size * sizeof(T));
+                target[0] = 0;
+                T defaultValue = chunk.DefaultValue;
+                Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
+                Buffer.MemoryCopy(chunk.tiles, target + 1 + sizeof(T), bytes, bytes);
             }
-
             return data;
         }
 
-        public byte[] SerializeSparse(SparseChunk2D<K, T> chunk)
+        internal byte[] SerializeEmptyDense(T defaultValue)
         {
-            List<byte> data = new List<byte>();
-            data.Add(1); // Format identifier for Sparse
-            data.AddRange(ToBytes(chunk.DefaultValue));
-
-            foreach (var kvp in chunk.tiles)
+            byte[] data = new byte[1 + sizeof(T)];
+            fixed (byte* target = data)
             {
-                data.AddRange(ToBytes(kvp.Key));
-                data.AddRange(ToBytes(kvp.Value));
+                target[0] = 4;
+                Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
             }
-
-            return data.ToArray();
+            return data;
         }
 
-        // Generic method to convert unmanaged types to byte array
-        private static byte[] ToBytes<TValue>(TValue value) where TValue : unmanaged
+        // Format 1: raw K x/y. Format 2: packed [xxxx yyyy] for size-16 chunks.
+        public byte[] SerializeSparse(SparseChunk2D<K, T> chunk, bool packedXY = false)
         {
-            int size = sizeof(TValue);
-            byte[] bytes = new byte[size];
-
-            unsafe
+            if (packedXY && chunk.Size != 16)
+                throw new ArgumentException("Packed XY requires a chunk size of 16", nameof(chunk));
+            int keySize = sizeof(K);
+            int coordinateSize = packedXY ? sizeof(byte) : 2 * keySize;
+            int entrySize = checked(coordinateSize + sizeof(T));
+            byte[] data = new byte[checked(1 + sizeof(T) + chunk.tiles.Count * entrySize)];
+            fixed (byte* target = data)
             {
-                fixed (byte* ptr = bytes)
+                target[0] = (byte)(packedXY ? 2 : 1);
+                T defaultValue = chunk.DefaultValue;
+                Buffer.MemoryCopy(&defaultValue, target + 1, sizeof(T), sizeof(T));
+                int offset = 1 + sizeof(T);
+                foreach (var kvp in chunk.tiles)
                 {
-                    *(TValue*)ptr = value;
+                    if (packedXY)
+                    {
+                        int x = Convert.ToInt32(kvp.Key.Item1);
+                        int y = Convert.ToInt32(kvp.Key.Item2);
+                        if ((uint)x > 15 || (uint)y > 15)
+                            throw new ArgumentException("Packed XY coordinate out of range", nameof(chunk));
+                        target[offset] = (byte)((x << 4) | y);
+                    }
+                    else
+                    {
+                        K x = kvp.Key.Item1;
+                        K y = kvp.Key.Item2;
+                        Buffer.MemoryCopy(&x, target + offset, keySize, keySize);
+                        Buffer.MemoryCopy(&y, target + offset + keySize, keySize, keySize);
+                    }
+                    T value = kvp.Value;
+                    Buffer.MemoryCopy(&value, target + offset + coordinateSize, sizeof(T), sizeof(T));
+                    offset += entrySize;
                 }
             }
-            return bytes;
+            return data;
         }
     }
 }
