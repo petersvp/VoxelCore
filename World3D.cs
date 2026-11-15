@@ -96,6 +96,27 @@ namespace PiDev.VoxelCore
             chunks.Remove((chunkX, chunkY, chunkZ));
         }
 
+        public void OptimizeChunk(int chunkX, int chunkY, int chunkZ)
+        {
+            var key = (chunkX, chunkY, chunkZ);
+            if (!chunks.TryGetValue(key, out var chunk)) return;
+            if (chunk is DenseChunk3D<K, T> denseChunk)
+            {
+                var sparseChunk = denseChunk.Optimize();
+                if (sparseChunk != null) chunks[key] = sparseChunk;
+            }
+            else if (chunk is SparseChunk3D<K, T> existingSparseChunk)
+            {
+                existingSparseChunk.Optimize();
+            }
+        }
+
+        public void OptimizeAllChunks()
+        {
+            var keys = new List<(int, int, int)>(chunks.Keys);
+            foreach (var key in keys) OptimizeChunk(key.Item1, key.Item2, key.Item3);
+        }
+
         public ChunkSerializer3D<K, T> GetSerializer(Dictionary<T, T>? replacements)
         {
             return new ChunkSerializer3D<K, T>(replacements);

@@ -108,6 +108,7 @@ namespace PiDev.VoxelCore
         public DenseChunk3D<K, T> ToDenseChunk()
         {
             var denseChunk = new DenseChunk3D<K, T>(Size, DefaultValue);
+            denseChunk.userdata = userdata;
             foreach (var kvp in tiles)
                 denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value;
             return denseChunk;
@@ -116,6 +117,7 @@ namespace PiDev.VoxelCore
         public DenseChunk3D<K, T> ToDenseChunk(int size)
         {
             var denseChunk = new DenseChunk3D<K, T>(size, DefaultValue);
+            denseChunk.userdata = userdata;
             foreach (var kvp in tiles)
                 denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value;
             return denseChunk;

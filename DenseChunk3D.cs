@@ -64,6 +64,7 @@ namespace PiDev.VoxelCore
         public SparseChunk3D<K, T> ToSparseChunk(T defaultValue)
         {
             var sparseChunk = new SparseChunk3D<K, T>(Size, defaultValue);
+            sparseChunk.userdata = userdata;
             for (int x = 0; x < Size; x++)
                 for (int y = 0; y < Size; y++)
                     for (int z = 0; z < Size; z++)
@@ -72,6 +73,34 @@ namespace PiDev.VoxelCore
                         if (!value.Equals(defaultValue)) sparseChunk[x, y, z] = value;
                     }
             return sparseChunk;
+        }
+
+        public unsafe SparseChunk3D<K, T>? Optimize()
+        {
+            int total = checked(Size * Size * Size);
+            var frequency = new Dictionary<T, int>();
+            for (int x = 0; x < Size; x++)
+                for (int y = 0; y < Size; y++)
+                    for (int z = 0; z < Size; z++)
+                    {
+                        T value = tiles[x, y, z];
+                        frequency.TryGetValue(value, out int count);
+                        frequency[value] = count + 1;
+                    }
+
+            T mostCommonValue = DefaultValue;
+            int mostCommonCount = 0;
+            foreach (var kvp in frequency)
+                if (kvp.Value > mostCommonCount)
+                {
+                    mostCommonValue = kvp.Key;
+                    mostCommonCount = kvp.Value;
+                }
+
+            long sparseBytes = (long)(total - mostCommonCount) * (3 * sizeof(K) + sizeof(T));
+            long denseBytes = (long)total * sizeof(T);
+            if (mostCommonCount * 5L <= total * 3L || sparseBytes >= denseBytes) return null;
+            return ToSparseChunk(mostCommonValue);
         }
     }
 }
