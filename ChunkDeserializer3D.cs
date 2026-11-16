@@ -98,8 +98,6 @@ namespace PiDev.VoxelCore
                     y = (int)Convert.ChangeType(yKey, typeof(int));
                     z = (int)Convert.ChangeType(zKey, typeof(int));
                 }
-                if ((uint)x >= (uint)chunkSize || (uint)y >= (uint)chunkSize || (uint)z >= (uint)chunkSize)
-                    throw new ArgumentException("Sparse chunk coordinate out of range", nameof(data));
                 T value = default;
                 Buffer.MemoryCopy(source + offset + coordinateSize, &value, sizeof(T), sizeof(T));
                 chunk[x, y, z] = value;

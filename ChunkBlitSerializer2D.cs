@@ -40,16 +40,24 @@ namespace PiDev.VoxelCore
         }
 
         // Format 1: raw K x/y. Format 2: packed [xxxx yyyy] for size-16 chunks.
-        /// <summary>Copies stored sparse entries using raw K coordinates or packed size-16 coordinates.</summary>
-        /// <param name="packedXY">True packs X and Y into one byte and requires Size to equal 16.</param>
+        /// <summary>Copies every sparse entry, using raw K coordinates when any entry cannot be packed.</summary>
+        /// <param name="packedXY">Requests packed X and Y for a size-16 chunk when all coordinates fit.</param>
         public byte[] SerializeSparse(SparseChunk2DFast<K, T> chunk, bool packedXY = false)
         {
             if (packedXY && chunk.Size != 16)
                 throw new ArgumentException("Packed XY requires a chunk size of 16", nameof(chunk));
+            var entries = chunk.tiles.ToArray();
+            if (packedXY)
+                foreach (var entry in entries)
+                    if ((uint)Convert.ToInt32(entry.Key.Item1) > 15 ||
+                        (uint)Convert.ToInt32(entry.Key.Item2) > 15)
+                    {
+                        packedXY = false;
+                        break;
+                    }
             int keySize = sizeof(K);
             int coordinateSize = packedXY ? sizeof(byte) : 2 * keySize;
             int entrySize = checked(coordinateSize + sizeof(T));
-            var entries = chunk.tiles.ToArray();
             byte[] data = new byte[checked(1 + sizeof(T) + entries.Length * entrySize)];
             fixed (byte* target = data)
             {
@@ -63,8 +71,6 @@ namespace PiDev.VoxelCore
                     {
                         int x = Convert.ToInt32(kvp.Key.Item1);
                         int y = Convert.ToInt32(kvp.Key.Item2);
-                        if ((uint)x > 15 || (uint)y > 15)
-                            throw new ArgumentException("Packed XY coordinate out of range", nameof(chunk));
                         target[offset] = (byte)((x << 4) | y);
                     }
                     else

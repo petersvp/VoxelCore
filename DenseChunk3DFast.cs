@@ -34,12 +34,13 @@ namespace PiDev.VoxelCore
         private int GetIndex(int x, int y, int z) => (z * size * size) + (y * size) + x;
 
         /// <summary>Reads or writes a local cell; the first write allocates and fills the buffer.</summary>
-        /// <remarks>Coordinates must be within 0 through Size-1; this pointer-backed indexer does not check bounds.</remarks>
+        /// <remarks>Out-of-bounds reads return DefaultValue; writes are ignored.</remarks>
         public T this[int x, int y, int z]
         {
-            get => (tiles != null) ? tiles[GetIndex(x, y, z)] : DefaultValue;
+            get => (uint)x < (uint)size && (uint)y < (uint)size && (uint)z < (uint)size && tiles != null ? tiles[GetIndex(x, y, z)] : DefaultValue;
             set
             {
+                if ((uint)x >= (uint)size || (uint)y >= (uint)size || (uint)z >= (uint)size) return;
                 if (tiles == null)
                 {
                     tiles = (T*)Marshal.AllocHGlobal(checked(size * size * size * sizeof(T)));
@@ -68,7 +69,7 @@ namespace PiDev.VoxelCore
         /// <summary>Reads a cell; returns false with DefaultValue if the buffer is still unallocated.</summary>
         public bool TryGet(int x, int y, int z, out T value)
         {
-            if (tiles == null)
+            if ((uint)x >= (uint)size || (uint)y >= (uint)size || (uint)z >= (uint)size || tiles == null)
             {
                 value = DefaultValue;
                 return false;
@@ -80,6 +81,7 @@ namespace PiDev.VoxelCore
         /// <summary>Writes a cell, allocating the buffer if needed, and returns true.</summary>
         public bool TrySet(int x, int y, int z, T value)
         {
+            if ((uint)x >= (uint)size || (uint)y >= (uint)size || (uint)z >= (uint)size) return false;
             if (tiles == null)
             {
                 tiles = (T*)Marshal.AllocHGlobal(checked(size * size * size * sizeof(T)));
@@ -102,6 +104,18 @@ namespace PiDev.VoxelCore
                         if (includeDefault || !value.Equals(DefaultValue))
                             yield return (x, y, z, value);
                     }
+        }
+
+        /// <summary>Yields this chunk's local cells, filtering in the inner iterator only when exact is true.</summary>
+        public IEnumerable<IEnumerable<(int x, int y, int z, T value)>> EnumerateRange(Range3D range, bool exact)
+        {
+            yield return exact ? EnumerateRangeExact(range) : Enumerate();
+        }
+
+        private IEnumerable<(int x, int y, int z, T value)> EnumerateRangeExact(Range3D range)
+        {
+            foreach (var cell in Enumerate())
+                if (range.Contains(cell.x, cell.y, cell.z)) yield return cell;
         }
 
         /// <summary>Copies this chunk into sparse storage using its current DefaultValue.</summary>

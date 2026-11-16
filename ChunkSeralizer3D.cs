@@ -31,10 +31,11 @@ namespace PiDev.VoxelCore
                 ? replaced : value;
         }
 
-        /// <summary>Writes every cell as a whole raw T value with x varying fastest.</summary>
+        /// <summary>Writes every in-bounds cell as a whole raw T value; sparse entries outside Size use sparse encoding.</summary>
         /// <remarks>A dense chunk without an allocated buffer uses the default-only format instead.</remarks>
         public unsafe byte[] SerializeDense(IChunk3DFast<T> chunk)
         {
+            if (HasOutsideEntriesImpl(chunk)) return SerializeSparse(chunk, false);
             if (chunk is DenseChunk3DFast<K, T> emptyDense && emptyDense.tiles == null)
                 return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
             if (replacementTable == null && chunk is DenseChunk3DFast<K, T> dense)
@@ -60,7 +61,7 @@ namespace PiDev.VoxelCore
             return data;
         }
 
-        /// <summary>Writes non-default cells and their local coordinates.</summary>
+        /// <summary>Writes non-default cells and their coordinates, including entries outside Size.</summary>
         /// <param name="packedXYZ">If true, packs XYZ into two bytes; requires a size-16 chunk.</param>
         public unsafe byte[] SerializeSparse(IChunk3DFast<T> chunk, bool packedXYZ = false)
         {
@@ -78,9 +79,10 @@ namespace PiDev.VoxelCore
         }
 
         // [format][default value][size-dependent RLE runs]
-        /// <summary>Writes runs of equal whole T values in x-first cell order.</summary>
+        /// <summary>Writes runs of in-bounds T values; sparse entries outside Size use sparse encoding.</summary>
         public unsafe byte[] SerializeRLE(IChunk3DFast<T> chunk)
         {
+            if (HasOutsideEntriesImpl(chunk)) return SerializeSparse(chunk, false);
             if (chunk is DenseChunk3DFast<K, T> emptyDense && emptyDense.tiles == null)
                 return blit.SerializeEmptyDense(Replace(chunk.DefaultValue));
             int cells = checked(chunk.Size * chunk.Size * chunk.Size);
@@ -95,10 +97,19 @@ namespace PiDev.VoxelCore
                         yield return Replace(chunk[x, y, z]);
         }
 
+        private bool HasOutsideEntriesImpl(IChunk3DFast<T> chunk)
+        {
+            if (chunk is DenseChunk3DFast<K, T>) return false;
+            foreach (var (x, y, z, _) in chunk.Enumerate())
+                if ((uint)x >= (uint)chunk.Size || (uint)y >= (uint)chunk.Size || (uint)z >= (uint)chunk.Size) return true;
+            return false;
+        }
+
         /// <summary>Selects a chunk encoding and returns its bytes.</summary>
         /// <param name="exact">False estimates dense versus sparse size without building RLE. True serializes dense, sparse, and RLE and returns the shortest byte array.</param>
         public unsafe byte[] SerializeOptimal(IChunk3DFast<T> chunk, bool exact)
         {
+            if (HasOutsideEntriesImpl(chunk)) return SerializeSparse(chunk, false);
             if (!exact)
             {
                 T defaultValue = Replace(chunk.DefaultValue);

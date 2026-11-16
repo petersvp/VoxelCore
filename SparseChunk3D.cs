@@ -45,17 +45,15 @@ namespace PiDev.VoxelCore
         }
 
         /// <summary>Reads a local cell, or stores/removes it when assigned a non-default/default value.</summary>
-        /// <remarks>Coordinates outside 0 through Size-1 throw.</remarks>
+        /// <remarks>Coordinates are unrestricted within the range representable by K.</remarks>
         public T this[int x, int y, int z]
         {
             get
             {
-                CheckBounds(x, y, z);
                 return tiles.TryGetValue((ToKey(x), ToKey(y), ToKey(z)), out Cell cell) ? cell.value : DefaultValue;
             }
             set
             {
-                CheckBounds(x, y, z);
                 var key = (ToKey(x), ToKey(y), ToKey(z));
                 if (Comparer.Equals(value, DefaultValue)) tiles.TryRemove(key, out _);
                 else tiles[key] = new Cell(value);
@@ -66,35 +64,22 @@ namespace PiDev.VoxelCore
 
         private static int ToCoordinate(K key) => (int)Convert.ChangeType(key, typeof(int));
 
-        private void CheckBounds(int x, int y, int z)
-        {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size)
-                throw new IndexOutOfRangeException();
-        }
-
-        /// <summary>Looks up an explicitly stored in-bounds cell; returns false on a miss or outside bounds.</summary>
-        /// <remarks>Outside bounds, value is DefaultValue. An in-bounds missing key yields default(T).</remarks>
+        /// <summary>Looks up an explicitly stored cell at any representable coordinate.</summary>
         public bool TryGet(int x, int y, int z, out T value)
         {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size)
-            {
-                value = DefaultValue;
-                return false;
-            }
             if (tiles.TryGetValue((ToKey(x), ToKey(y), ToKey(z)), out Cell cell))
             {
                 value = cell.value;
                 return true;
             }
-            value = default!;
+            value = DefaultValue;
             return false;
         }
 
-        /// <summary>Stores a non-default in-bounds value, or removes a matching-default entry.</summary>
-        /// <returns>False outside bounds; otherwise true for a stored value or when an entry was removed.</returns>
+        /// <summary>Stores a non-default value at any representable coordinate, or removes a matching-default entry.</summary>
+        /// <returns>True for a stored value or when an entry was removed.</returns>
         public bool TrySet(int x, int y, int z, T value)
         {
-            if ((uint)x >= (uint)Size || (uint)y >= (uint)Size || (uint)z >= (uint)Size) return false;
             var key = (ToKey(x), ToKey(y), ToKey(z));
             if (Comparer.Equals(value, DefaultValue)) return tiles.TryRemove(key, out _);
             tiles[key] = new Cell(value);
@@ -115,6 +100,18 @@ namespace PiDev.VoxelCore
             }
             foreach (var kvp in tiles)
                 yield return (ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3), kvp.Value.value);
+        }
+
+        /// <summary>Yields this chunk's stored local cells, filtering in the inner iterator only when exact is true.</summary>
+        public IEnumerable<IEnumerable<(int x, int y, int z, T value)>> EnumerateRange(Range3D range, bool exact)
+        {
+            yield return exact ? EnumerateRangeExact(range) : Enumerate();
+        }
+
+        private IEnumerable<(int x, int y, int z, T value)> EnumerateRangeExact(Range3D range)
+        {
+            foreach (var cell in Enumerate())
+                if (range.Contains(cell.x, cell.y, cell.z)) yield return cell;
         }
 
         /// <summary>Optimizes against the most common cell value.</summary>
@@ -140,6 +137,7 @@ namespace PiDev.VoxelCore
             frequency.Add(DefaultValue, total - storedInBounds);
             T targetDefault = hasDefaultValue ? defaultValue : frequency.MostCommon(DefaultValue);
             int targetCount = frequency.Count(targetDefault);
+            if (storedInBounds != tiles.Count) return this;
             if (targetCount == total && (hasDefaultValue || Comparer.Equals(targetDefault, DefaultValue))) return null;
             if (total - targetCount >= tiles.Count) return this;
 
@@ -158,11 +156,7 @@ namespace PiDev.VoxelCore
         /// <summary>Copies this chunk into a dense buffer of the same size.</summary>
         public DenseChunk3D<K, T> ToDenseChunk()
         {
-            var denseChunk = new DenseChunk3D<K, T>(Size, DefaultValue, Comparer, Serializer);
-            denseChunk.userdata = userdata;
-            foreach (var kvp in tiles)
-                denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value.value;
-            return denseChunk;
+            return ToDenseChunk(Size);
         }
 
         /// <summary>Copies this chunk into a dense buffer whose side length is at least Size.</summary>
@@ -172,7 +166,11 @@ namespace PiDev.VoxelCore
             var denseChunk = new DenseChunk3D<K, T>(size, DefaultValue, Comparer, Serializer);
             denseChunk.userdata = userdata;
             foreach (var kvp in tiles)
-                denseChunk[ToCoordinate(kvp.Key.Item1), ToCoordinate(kvp.Key.Item2), ToCoordinate(kvp.Key.Item3)] = kvp.Value.value;
+            {
+                int x = ToCoordinate(kvp.Key.Item1), y = ToCoordinate(kvp.Key.Item2), z = ToCoordinate(kvp.Key.Item3);
+                if ((uint)x < (uint)size && (uint)y < (uint)size && (uint)z < (uint)size)
+                    denseChunk[x, y, z] = kvp.Value.value;
+            }
             return denseChunk;
         }
 

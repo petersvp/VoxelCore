@@ -43,16 +43,25 @@ namespace PiDev.VoxelCore
         }
 
         // Format 1: raw K x/y/z. Format 2: little-endian [xxxx yyyy zzzz 0000].
-        /// <summary>Copies stored sparse entries using raw K coordinates or packed size-16 coordinates.</summary>
-        /// <param name="packedXYZ">True packs XYZ into two bytes and requires Size to equal 16.</param>
+        /// <summary>Copies every sparse entry, using raw K coordinates when any entry cannot be packed.</summary>
+        /// <param name="packedXYZ">Requests packed XYZ for a size-16 chunk when all coordinates fit.</param>
         public byte[] SerializeSparse(SparseChunk3DFast<K, T> chunk, bool packedXYZ = false)
         {
             if (packedXYZ && chunk.Size != 16)
                 throw new ArgumentException("Packed XYZ requires a chunk size of 16", nameof(chunk));
+            var entries = chunk.tiles.ToArray();
+            if (packedXYZ)
+                foreach (var entry in entries)
+                    if ((uint)Convert.ToInt32(entry.Key.Item1) > 15 ||
+                        (uint)Convert.ToInt32(entry.Key.Item2) > 15 ||
+                        (uint)Convert.ToInt32(entry.Key.Item3) > 15)
+                    {
+                        packedXYZ = false;
+                        break;
+                    }
             int keySize = sizeof(K);
             int coordinateSize = packedXYZ ? sizeof(ushort) : 3 * keySize;
             int entrySize = checked(coordinateSize + sizeof(T));
-            var entries = chunk.tiles.ToArray();
             byte[] data = new byte[checked(1 + sizeof(T) + entries.Length * entrySize)];
             fixed (byte* target = data)
             {
@@ -67,8 +76,6 @@ namespace PiDev.VoxelCore
                         int x = Convert.ToInt32(kvp.Key.Item1);
                         int y = Convert.ToInt32(kvp.Key.Item2);
                         int z = Convert.ToInt32(kvp.Key.Item3);
-                        if ((uint)x > 15 || (uint)y > 15 || (uint)z > 15)
-                            throw new ArgumentException("Packed XYZ coordinate out of range", nameof(chunk));
                         ushort coordinates = (ushort)((x << 12) | (y << 8) | (z << 4));
                         target[offset] = (byte)coordinates;
                         target[offset + 1] = (byte)(coordinates >> 8);

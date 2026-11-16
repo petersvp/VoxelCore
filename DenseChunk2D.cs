@@ -40,12 +40,13 @@ namespace PiDev.VoxelCore
         private int GetIndex(int x, int y) => (y * size) + x;
 
         /// <summary>Reads or writes a local cell; the first write allocates and fills the buffer.</summary>
-        /// <remarks>Coordinates must be within 0 through Size-1; the array access checks its flat index.</remarks>
+        /// <remarks>Out-of-bounds reads return DefaultValue; writes are ignored.</remarks>
         public T this[int x, int y]
         {
-            get => (tiles != null) ? tiles[GetIndex(x, y)] : DefaultValue;
+            get => (uint)x < (uint)size && (uint)y < (uint)size && tiles != null ? tiles[GetIndex(x, y)] : DefaultValue;
             set
             {
+                if ((uint)x >= (uint)size || (uint)y >= (uint)size) return;
                 if (tiles == null)
                 {
                     tiles = new T[checked(size * size)];
@@ -58,7 +59,7 @@ namespace PiDev.VoxelCore
         /// <summary>Reads a cell; returns false with DefaultValue if the buffer is still unallocated.</summary>
         public bool TryGet(int x, int y, out T value)
         {
-            if (tiles == null)
+            if ((uint)x >= (uint)size || (uint)y >= (uint)size || tiles == null)
             {
                 value = DefaultValue;
                 return false;
@@ -70,6 +71,7 @@ namespace PiDev.VoxelCore
         /// <summary>Writes a cell, allocating the buffer if needed, and returns true.</summary>
         public bool TrySet(int x, int y, T value)
         {
+            if ((uint)x >= (uint)size || (uint)y >= (uint)size) return false;
             if (tiles == null)
             {
                 tiles = new T[checked(size * size)];
@@ -102,6 +104,18 @@ namespace PiDev.VoxelCore
                     if (includeDefault || !Comparer.Equals(v, def))
                         yield return (x, y, v);
                 }
+        }
+
+        /// <summary>Yields this chunk's local cells, filtering in the inner iterator only when exact is true.</summary>
+        public IEnumerable<IEnumerable<(int x, int y, T value)>> EnumerateRange(Range2D range, bool exact)
+        {
+            yield return exact ? EnumerateRangeExact(range) : Enumerate();
+        }
+
+        private IEnumerable<(int x, int y, T value)> EnumerateRangeExact(Range2D range)
+        {
+            foreach (var cell in Enumerate())
+                if (range.Contains(cell.x, cell.y)) yield return cell;
         }
 
         /// <summary>Copies this chunk into sparse storage using its current DefaultValue.</summary>

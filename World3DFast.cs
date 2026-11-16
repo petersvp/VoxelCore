@@ -16,7 +16,7 @@ namespace PiDev.VoxelCore
     ///     byte[] data = world.GetSerializer(null).SerializeOptimal(entry.Value, true);
     /// }
     /// ]]></example>
-    public class World3DFast<K, T> where T : unmanaged where K : unmanaged
+    public class World3DFast<K, T> : IVoxelDataAccess3D<T> where T : unmanaged where K : unmanaged
     {
         /// <summary>Value returned outside bounds and passed to chunk optimization.</summary>
         public T defaultValue;
@@ -35,6 +35,42 @@ namespace PiDev.VoxelCore
         public IEnumerable<KeyValuePair<(int x, int y, int z), IChunk3DFast<T>>> EnumerateChunks()
         {
             foreach (var kv in chunks) yield return kv;
+        }
+
+        /// <summary>Yields independent world-coordinate sequences from loaded chunks intersecting the inclusive range.</summary>
+        /// <remarks>Exact filtering runs inside each sequence; non-exact sequences may include cells outside range. Missing chunks are not created.</remarks>
+        public IEnumerable<IEnumerable<(int x, int y, int z, T value)>> EnumerateRange(Range3D range, bool exact)
+        {
+            if (range.minX > range.maxX || range.minY > range.maxY || range.minZ > range.maxZ) yield break;
+            var min = GetChunkCoords(range.minX, range.minY, range.minZ);
+            var max = GetChunkCoords(range.maxX, range.maxY, range.maxZ);
+            foreach (var entry in chunks)
+            {
+                var key = entry.Key;
+                if (key.Item1 < min.chunkX || key.Item1 > max.chunkX ||
+                    key.Item2 < min.chunkY || key.Item2 > max.chunkY ||
+                    key.Item3 < min.chunkZ || key.Item3 > max.chunkZ) continue;
+                int x = key.Item1 * chunkSize, y = key.Item2 * chunkSize, z = key.Item3 * chunkSize;
+                yield return exact ? EnumerateChunkWorldExact(entry.Value, x, y, z, range)
+                    : EnumerateChunkWorld(entry.Value, x, y, z);
+            }
+        }
+
+        private static IEnumerable<(int x, int y, int z, T value)> EnumerateChunkWorld(
+            IChunk3DFast<T> chunk, int offsetX, int offsetY, int offsetZ)
+        {
+            foreach (var cell in chunk.Enumerate())
+                yield return (offsetX + cell.x, offsetY + cell.y, offsetZ + cell.z, cell.value);
+        }
+
+        private static IEnumerable<(int x, int y, int z, T value)> EnumerateChunkWorldExact(
+            IChunk3DFast<T> chunk, int offsetX, int offsetY, int offsetZ, Range3D range)
+        {
+            foreach (var cell in chunk.Enumerate())
+            {
+                int x = offsetX + cell.x, y = offsetY + cell.y, z = offsetZ + cell.z;
+                if (range.Contains(x, y, z)) yield return (x, y, z, cell.value);
+            }
         }
 
         /// <summary>Optional inclusive bounds for tile reads and writes; null disables bounds checking.</summary>

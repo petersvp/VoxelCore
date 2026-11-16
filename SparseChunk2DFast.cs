@@ -67,6 +67,18 @@ namespace PiDev.VoxelCore
                 yield return (x, y, kv.Value);
             }
         }
+
+        /// <summary>Yields this chunk's stored local cells, filtering in the inner iterator only when exact is true.</summary>
+        public IEnumerable<IEnumerable<(int x, int y, T value)>> EnumerateRange(Range2D range, bool exact)
+        {
+            yield return exact ? EnumerateRangeExact(range) : Enumerate();
+        }
+
+        private IEnumerable<(int x, int y, T value)> EnumerateRangeExact(Range2D range)
+        {
+            foreach (var cell in Enumerate())
+                if (range.Contains(cell.x, cell.y)) yield return cell;
+        }
         
         /// <summary>Copies this chunk into a dense buffer of the same size.</summary>
         public DenseChunk2DFast<K, T> ToDenseChunk()
@@ -74,7 +86,7 @@ namespace PiDev.VoxelCore
             return ToDenseChunk(Size);
         }
 
-        /// <summary>Copies this chunk into a dense buffer whose side length is at least Size.</summary>
+        /// <summary>Copies cells that fit the requested dense buffer.</summary>
         public DenseChunk2DFast<K, T> ToDenseChunk(int size)
         {
             if (size <= 0 || size < Size) throw new ArgumentOutOfRangeException(nameof(size));
@@ -85,8 +97,7 @@ namespace PiDev.VoxelCore
                 var k = kvp.Key;
                 int X = (int)Convert.ChangeType(k.Item1, typeof(int));
                 int Y = (int)Convert.ChangeType(k.Item2, typeof(int));
-                if ((uint)X >= (uint)size || (uint)Y >= (uint)size)
-                    throw new ArgumentOutOfRangeException(nameof(size));
+                if ((uint)X >= (uint)size || (uint)Y >= (uint)size) continue;
                 denseChunk[X,Y] = kvp.Value;
             }
             return denseChunk;
@@ -118,6 +129,7 @@ namespace PiDev.VoxelCore
                     mostCommonValue = kvp.Key;
             T targetDefault = defaultValue.HasValue ? defaultValue.Value : mostCommonValue;
             frequency.TryGetValue(targetDefault, out int targetCount);
+            if (storedInBounds != tiles.Count) return this;
             if (targetCount == total && (defaultValue.HasValue || targetDefault.Equals(DefaultValue))) return null;
             if (total - targetCount >= tiles.Count) return this;
 
@@ -133,21 +145,22 @@ namespace PiDev.VoxelCore
         }
 
         /// <summary>Looks up an explicitly stored cell; returns false for a missing key.</summary>
-        /// <remarks>On a miss, value is default(T), not necessarily this chunk's DefaultValue. This method's direct key cast currently requires K to be int.</remarks>
+        /// <remarks>On a miss, value is this chunk's DefaultValue.</remarks>
         public bool TryGet(int x, int y, out T value)
         {
-            K kx = (K)(object)x;
-            K ky = (K)(object)y;
-            return tiles.TryGetValue((kx, ky), out value);
+            K kx = (K)Convert.ChangeType(x, typeof(K));
+            K ky = (K)Convert.ChangeType(y, typeof(K));
+            if (tiles.TryGetValue((kx, ky), out value)) return true;
+            value = DefaultValue;
+            return false;
         }
 
         /// <summary>Stores a non-default value, or removes a matching-default entry.</summary>
-        /// <remarks>This method's direct key cast currently requires K to be int.</remarks>
         /// <returns>True for a stored non-default value, or whether an entry was removed for a default value.</returns>
         public bool TrySet(int x, int y, T value)
         {
-            K kx = (K)(object)x;
-            K ky = (K)(object)y;
+            K kx = (K)Convert.ChangeType(x, typeof(K));
+            K ky = (K)Convert.ChangeType(y, typeof(K));
             if (value.Equals(DefaultValue)) return tiles.TryRemove((kx, ky), out _);
             tiles[(kx, ky)] = value;
             return true;

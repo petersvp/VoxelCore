@@ -17,7 +17,7 @@ namespace PiDev.VoxelCore
     ///     byte[] data = world.GetSerializer(null).SerializeOptimal(entry.Value, true);
     /// }
     /// ]]></example>
-    public class World2DFast<K, T> where T : unmanaged where K : unmanaged
+    public class World2DFast<K, T> : IVoxelDataAccess2D<T> where T : unmanaged where K : unmanaged
     {
         /// <summary>Records whether a default value was supplied to the constructor.</summary>
         public bool usePreferredDefaultValue;
@@ -38,6 +38,41 @@ namespace PiDev.VoxelCore
         public IEnumerable<KeyValuePair<(int x, int y), IChunk2DFast<T>>> EnumerateChunks()
         {
             foreach (var kv in chunks) yield return kv;
+        }
+
+        /// <summary>Yields independent world-coordinate sequences from loaded chunks intersecting the inclusive range.</summary>
+        /// <remarks>Exact filtering runs inside each sequence; non-exact sequences may include cells outside range. Missing chunks are not created.</remarks>
+        public IEnumerable<IEnumerable<(int x, int y, T value)>> EnumerateRange(Range2D range, bool exact)
+        {
+            if (range.minX > range.maxX || range.minY > range.maxY) yield break;
+            var min = GetChunkCoords(range.minX, range.minY);
+            var max = GetChunkCoords(range.maxX, range.maxY);
+            foreach (var entry in chunks)
+            {
+                var key = entry.Key;
+                if (key.Item1 < min.chunkX || key.Item1 > max.chunkX ||
+                    key.Item2 < min.chunkY || key.Item2 > max.chunkY) continue;
+                int x = key.Item1 * chunkSize, y = key.Item2 * chunkSize;
+                yield return exact ? EnumerateChunkWorldExact(entry.Value, x, y, range)
+                    : EnumerateChunkWorld(entry.Value, x, y);
+            }
+        }
+
+        private static IEnumerable<(int x, int y, T value)> EnumerateChunkWorld(
+            IChunk2DFast<T> chunk, int offsetX, int offsetY)
+        {
+            foreach (var cell in chunk.Enumerate())
+                yield return (offsetX + cell.x, offsetY + cell.y, cell.value);
+        }
+
+        private static IEnumerable<(int x, int y, T value)> EnumerateChunkWorldExact(
+            IChunk2DFast<T> chunk, int offsetX, int offsetY, Range2D range)
+        {
+            foreach (var cell in chunk.Enumerate())
+            {
+                int x = offsetX + cell.x, y = offsetY + cell.y;
+                if (range.Contains(x, y)) yield return (x, y, cell.value);
+            }
         }
 
         /// <summary>Optional inclusive bounds for tile reads and writes; null disables bounds checking.</summary>
