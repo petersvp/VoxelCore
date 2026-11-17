@@ -1,4 +1,5 @@
-﻿using System.Collections;
+﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace PiDev.VoxelCore
@@ -9,6 +10,7 @@ namespace PiDev.VoxelCore
     /// var bounds = new Range2D(-1, 1, 0, 1);
     /// foreach (var point in bounds) { /* point.x and point.y are inside the bounds. */ }
     /// ]]></example>
+    [Serializable]
     public struct Range2D : IEnumerable<(int x, int y)>
     {
         /// <summary>Inclusive X and Y bounds.</summary>
